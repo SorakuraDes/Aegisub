@@ -25,10 +25,15 @@ void SubtitleGridModel::refresh() {
         for (auto &line : file_->Events)
             rows_.push_back(&line);
     }
-    if (active_row_ >= int(rows_.size()))
-        active_row_ = -1;
     endResetModel();
-    emit activeRowChanged();
+
+    // Non-empty models start with the first line selected, empty ones have no
+    // selection. Emit only on an actual change so listeners see a stable state.
+    const int new_active = rows_.empty() ? -1 : 0;
+    if (active_row_ != new_active) {
+        active_row_ = new_active;
+        emit activeRowChanged();
+    }
 }
 
 int SubtitleGridModel::activeRow() const {

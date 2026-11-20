@@ -32,6 +32,8 @@ signals:
     void textChanged();
     void startTimeChanged();
     void endTimeChanged();
+    /// Emitted whenever the underlying dialogue line was actually modified.
+    void edited();
 
 private:
     AssDialogue *active() const;

@@ -36,6 +36,7 @@ void PropertiesViewModel::setScriptTitle(const QString &title) {
         return;
     file_->SetScriptInfo("Title", title.toUtf8().toStdString());
     emit scriptTitleChanged();
+    emit edited();
 }
 
 int PropertiesViewModel::playResX() const {
@@ -47,6 +48,7 @@ void PropertiesViewModel::setPlayResX(int value) {
         return;
     file_->SetScriptInfo("PlayResX", std::to_string(value));
     emit playResXChanged();
+    emit edited();
 }
 
 int PropertiesViewModel::playResY() const {
@@ -58,6 +60,7 @@ void PropertiesViewModel::setPlayResY(int value) {
         return;
     file_->SetScriptInfo("PlayResY", std::to_string(value));
     emit playResYChanged();
+    emit edited();
 }
 
 void PropertiesViewModel::dumpAss() {

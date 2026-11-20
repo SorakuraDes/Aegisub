@@ -3,10 +3,15 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 
 Rectangle {
-    id: editBox
     color: "#1b1b1b"
     radius: 6
     implicitHeight: 150
+
+    function loadSelection() {
+        startField.text = editBoxVM.startTime
+        endField.text = editBoxVM.endTime
+        textArea.text = editBoxVM.text
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -26,10 +31,14 @@ Rectangle {
             TextField {
                 id: startField
                 Layout.preferredWidth: 150
+                implicitHeight: 34
+                topInset: 0
+                bottomInset: 0
+                leftInset: 0
+                rightInset: 0
                 font.family: "Consolas"
                 font.pixelSize: 13
                 enabled: gridModel.activeRow >= 0
-                placeholderText: "0:00:00.00"
                 onTextEdited: editBoxVM.startTime = text
             }
 
@@ -42,10 +51,14 @@ Rectangle {
             TextField {
                 id: endField
                 Layout.preferredWidth: 150
+                implicitHeight: 34
+                topInset: 0
+                bottomInset: 0
+                leftInset: 0
+                rightInset: 0
                 font.family: "Consolas"
                 font.pixelSize: 13
                 enabled: gridModel.activeRow >= 0
-                placeholderText: "0:00:00.00"
                 onTextEdited: editBoxVM.endTime = text
             }
 
@@ -53,43 +66,56 @@ Rectangle {
 
             Label {
                 text: gridModel.activeRow >= 0
-                      ? i18n.t("Row") + " " + (gridModel.activeRow + 1)
+                      ? "#" + (gridModel.activeRow + 1)
                       : i18n.t("No line selected")
                 font.pixelSize: 12
                 color: "#888888"
             }
         }
 
-        TextArea {
-            id: textArea
+        // The panel lives on the ScrollView so the TextArea can keep its own
+        // (zero-inset) geometry: text then always stays inside the background.
+        ScrollView {
+            id: textScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
-            font.pixelSize: 14
-            wrapMode: TextArea.Wrap
-            enabled: gridModel.activeRow >= 0
-            placeholderText: i18n.t("No line selected")
-            onTextChanged: if (editBoxVM.text !== text) editBoxVM.text = text
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             background: Rectangle {
                 color: "#2a2a2a"
                 radius: 4
             }
+
+            TextArea {
+                id: textArea
+                width: textScroll.availableWidth
+                height: implicitHeight
+                topInset: 0
+                bottomInset: 0
+                leftInset: 0
+                rightInset: 0
+                leftPadding: 10
+                rightPadding: 10
+                topPadding: 8
+                bottomPadding: 8
+                font.pixelSize: 14
+                wrapMode: TextArea.Wrap
+                enabled: gridModel.activeRow >= 0
+                placeholderText: i18n.t("No line selected")
+                onTextChanged: if (editBoxVM.text !== text) editBoxVM.text = text
+                background: null
+            }
         }
     }
 
-    // Reload the editors when the selection changes. Editing the fields must
-    // not fight the user's cursor, so we only sync on selection changes.
+    // Reload the editors when the selection changes or the model is reset
+    // (new/open document). Editing the fields must not fight the user's
+    // cursor, so we do not bind them to the view model properties.
     Connections {
         target: gridModel
-        function onActiveRowChanged() {
-            startField.text = editBoxVM.startTime
-            endField.text = editBoxVM.endTime
-            textArea.text = editBoxVM.text
-        }
+        function onActiveRowChanged() { loadSelection() }
+        function onModelReset() { loadSelection() }
     }
 
-    Component.onCompleted: {
-        startField.text = editBoxVM.startTime
-        endField.text = editBoxVM.endTime
-        textArea.text = editBoxVM.text
-    }
+    Component.onCompleted: loadSelection()
 }

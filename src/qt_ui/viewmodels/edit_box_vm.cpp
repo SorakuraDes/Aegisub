@@ -31,6 +31,10 @@ EditBoxViewModel::EditBoxViewModel(SubtitleGridModel *model, QObject *parent)
     if (model_) {
         connect(model_, &SubtitleGridModel::activeRowChanged,
                 this, &EditBoxViewModel::reload);
+        // Opening a new file resets the model; make sure the editors reload
+        // instead of showing a line from the previous document.
+        connect(model_, &QAbstractItemModel::modelReset,
+                this, &EditBoxViewModel::reload);
     }
 }
 
@@ -62,6 +66,7 @@ void EditBoxViewModel::setText(const QString &value) {
     if (model_)
         model_->notifyRowUpdated(model_->activeRow());
     emit textChanged();
+    emit edited();
 }
 
 QString EditBoxViewModel::startTime() const {
@@ -80,6 +85,7 @@ void EditBoxViewModel::setStartTime(const QString &value) {
     if (model_)
         model_->notifyRowUpdated(model_->activeRow());
     emit startTimeChanged();
+    emit edited();
 }
 
 QString EditBoxViewModel::endTime() const {
@@ -98,4 +104,5 @@ void EditBoxViewModel::setEndTime(const QString &value) {
     if (model_)
         model_->notifyRowUpdated(model_->activeRow());
     emit endTimeChanged();
+    emit edited();
 }

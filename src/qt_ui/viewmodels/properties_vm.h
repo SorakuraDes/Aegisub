@@ -35,6 +35,8 @@ signals:
     void scriptTitleChanged();
     void playResXChanged();
     void playResYChanged();
+    /// Emitted whenever an AssFile script-info value was actually modified.
+    void edited();
 
 private:
     AssFile *file_;
