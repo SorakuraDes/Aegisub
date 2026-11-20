@@ -1,11 +1,12 @@
 import QtQuick
 import QtQuick.Controls.Material
+import QtQuick.Layouts
 
 ApplicationWindow {
     id: mainWindow
     visible: true
-    width: 640
-    height: 480
+    width: 1000
+    height: 640
     title: "Aegisub Qt6 Test"
 
     Material.theme: Material.Dark
@@ -56,38 +57,43 @@ ApplicationWindow {
         win.requestActivate()
     }
 
-    Column {
-        anchors.centerIn: parent
-        spacing: 20
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 12
+        spacing: 8
 
-        Button {
-            text: "Hello Material 3"
-            anchors.horizontalCenter: parent.horizontalCenter
+        // Top bar: the former test buttons, kept out of the grid's way.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Button {
+                text: "About"
+                onClicked: mainWindow.openWindow("about")
+            }
+            Button {
+                text: "Preferences"
+                onClicked: mainWindow.openWindow("preferences")
+            }
+            Button {
+                text: "Properties"
+                onClicked: mainWindow.openWindow("properties")
+            }
+
+            Item { Layout.fillWidth: true }
+
+            Label {
+                text: "Aegisub Core Version: " + appInfo.version
+                font.pixelSize: 12
+                opacity: 0.8
+            }
         }
 
-        Label {
-            text: "Aegisub Core Version: " + appInfo.version
-            anchors.horizontalCenter: parent.horizontalCenter
-            font.pixelSize: 14
-            opacity: 0.85
-        }
-
-        Button {
-            text: "Show About Dialog"
-            anchors.horizontalCenter: parent.horizontalCenter
-            onClicked: mainWindow.openWindow("about")
-        }
-
-        Button {
-            text: "Show Preferences"
-            anchors.horizontalCenter: parent.horizontalCenter
-            onClicked: mainWindow.openWindow("preferences")
-        }
-
-        Button {
-            text: "Show Properties"
-            anchors.horizontalCenter: parent.horizontalCenter
-            onClicked: mainWindow.openWindow("properties")
+        // The subtitle grid takes over the rest of the window.
+        Loader {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            source: "qrc:/SubtitleGrid.qml"
         }
     }
 }

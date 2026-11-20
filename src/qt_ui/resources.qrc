@@ -1,6 +1,7 @@
 <RCC>
   <qresource prefix="/">
     <file>Main.qml</file>
+    <file>SubtitleGrid.qml</file>
     <file>AboutWindow.qml</file>
     <file>PreferencesWindow.qml</file>
     <file>PropertiesWindow.qml</file>
