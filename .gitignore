@@ -19,6 +19,9 @@ tools/repack-thes-dict.dSYM
 
 # Meson
 build*/
+.build-tools/
+subprojects/.wraplock
+subprojects/checkasm*
 subprojects/avisynth
 subprojects/bestsource/
 subprojects/boost*/

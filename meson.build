@@ -22,7 +22,10 @@ if host_machine.system() == 'windows'
 endif
 
 if host_machine.system() == 'windows'
-    version_sh = find_program('tools/version.ps1')
+    # 用 powershell -ExecutionPolicy Bypass 显式调用，避免受系统脚本执行策略限制
+    version_sh = [find_program('powershell'),
+                  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                  meson.current_source_dir() / 'tools/version.ps1']
 else
     version_sh = find_program('tools/version.sh')
 endif
@@ -451,3 +454,5 @@ aegisub = executable('aegisub', aegisub_src, version_h, acconf, resrc,
                      install_dir: bindir,
                      dependencies: deps,
                      win_subsystem: 'windows')
+
+subdir('src/qt_ui')

@@ -45,4 +45,4 @@ xcopy "%~dp0\vfr" data\vfr\in
 mkdir data\keyframe
 xcopy "%~dp0\keyframe" data\keyframe
 
-ping -n 2 127.0.0.1 > nul
+ping -n 2 127.0.0.1 > nul 2>&1 || exit /b 0
