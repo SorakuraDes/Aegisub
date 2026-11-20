@@ -3,5 +3,6 @@
     <file>Main.qml</file>
     <file>AboutWindow.qml</file>
     <file>PreferencesWindow.qml</file>
+    <file>PropertiesWindow.qml</file>
   </qresource>
 </RCC>

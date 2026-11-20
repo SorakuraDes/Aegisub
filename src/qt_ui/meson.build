@@ -10,6 +10,7 @@ qt6_moc = qt6.preprocess(
         'viewmodels/about_vm.h',
         'viewmodels/translation_service.h',
         'viewmodels/preferences_vm.h',
+        'viewmodels/properties_vm.h',
     ),
     include_directories: [include_directories('.')],
     dependencies: qt6_dep,
@@ -32,6 +33,28 @@ default_config_platform = configure_file(
 
 # Reuse Aegisub's own version machinery (src/version.cpp + build/git_version.h)
 # and link the very same core library/deps the wxWidgets frontend uses.
+# The ass_* sources are the app-layer ASS data model (AssFile/AssInfo/AssStyle/
+# AssDialogue); they are shared with the wx frontend and only compiled here.
+# They need the wx precompiled header (src/utils.h uses wx types), hence the
+# separate static library with cpp_pch.
+ass_qt_core = static_library('ass_qt_core',
+    files(
+        '../ass_file.cpp',
+        '../ass_entry.cpp',
+        '../ass_dialogue.cpp',
+        '../ass_style.cpp',
+        '../ass_attachment.cpp',
+        '../ass_override.cpp',
+        '../ass_style_storage.cpp',
+        '../utils.cpp',
+        '../compat.cpp',
+    ),
+    include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('..')],
+    dependencies: deps,
+    cpp_pch: ['../include/agi_pre.h'],
+    cpp_args: ['/utf-8'],
+)
+
 aegisub_qt = executable('aegisub-qt',
     files(
         'main.cpp',
@@ -40,13 +63,14 @@ aegisub_qt = executable('aegisub-qt',
         'viewmodels/about_vm.cpp',
         'viewmodels/translation_service.cpp',
         'viewmodels/preferences_vm.cpp',
+        'viewmodels/properties_vm.cpp',
         '../version.cpp',
     ),
     qt6_moc,
     qt6_resources,
     version_h,
-    include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.')],
-    link_with: libaegisub,
+    include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.'), include_directories('..')],
+    link_with: [libaegisub, ass_qt_core],
     dependencies: [qt6_dep] + deps,
     cpp_args: ['/utf-8'],
 )

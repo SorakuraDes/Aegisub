@@ -13,10 +13,27 @@ ApplicationWindow {
 
     property var aboutWindow: null
     property var preferencesWindow: null
+    property var propertiesWindow: null
+
+    function windowFor(kind) {
+        if (kind === "about")
+            return aboutWindow
+        if (kind === "preferences")
+            return preferencesWindow
+        return propertiesWindow
+    }
+
+    function setWindow(kind, win) {
+        if (kind === "about")
+            aboutWindow = win
+        else if (kind === "preferences")
+            preferencesWindow = win
+        else
+            propertiesWindow = win
+    }
 
     function openWindow(kind) {
-        var isAbout = kind === "about"
-        var existing = isAbout ? aboutWindow : preferencesWindow
+        var existing = windowFor(kind)
         if (existing !== null) {
             existing.show()
             existing.raise()
@@ -24,17 +41,16 @@ ApplicationWindow {
             return
         }
 
-        var url = isAbout ? "qrc:/AboutWindow.qml" : "qrc:/PreferencesWindow.qml"
+        var url = "qrc:/" + (kind === "about" ? "AboutWindow.qml"
+                            : kind === "preferences" ? "PreferencesWindow.qml"
+                            : "PropertiesWindow.qml")
         var component = Qt.createComponent(url)
         if (component.status !== Component.Ready) {
             console.error("Failed to load", url, component.errorString())
             return
         }
         var win = component.createObject(null)
-        if (isAbout)
-            aboutWindow = win
-        else
-            preferencesWindow = win
+        setWindow(kind, win)
         win.show()
         win.raise()
         win.requestActivate()
@@ -66,6 +82,12 @@ ApplicationWindow {
             text: "Show Preferences"
             anchors.horizontalCenter: parent.horizontalCenter
             onClicked: mainWindow.openWindow("preferences")
+        }
+
+        Button {
+            text: "Show Properties"
+            anchors.horizontalCenter: parent.horizontalCenter
+            onClicked: mainWindow.openWindow("properties")
         }
     }
 }
