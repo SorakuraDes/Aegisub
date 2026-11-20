@@ -5,6 +5,7 @@
 #include "aegisub_core.h"
 #include "viewmodels/about_vm.h"
 #include "viewmodels/app_info_vm.h"
+#include "viewmodels/edit_box_vm.h"
 #include "viewmodels/preferences_vm.h"
 #include "viewmodels/properties_vm.h"
 #include "viewmodels/subtitle_grid_model.h"
@@ -87,6 +88,7 @@ int main(int argc, char *argv[]) {
     PreferencesViewModel preferencesVM;
     PropertiesViewModel propertiesVM(&script, &i18n);
     SubtitleGridModel gridModel(&script);
+    EditBoxViewModel editBoxVM(&gridModel);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("i18n", &i18n);
@@ -95,6 +97,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("preferencesVM", &preferencesVM);
     engine.rootContext()->setContextProperty("propertiesVM", &propertiesVM);
     engine.rootContext()->setContextProperty("gridModel", &gridModel);
+    engine.rootContext()->setContextProperty("editBoxVM", &editBoxVM);
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;

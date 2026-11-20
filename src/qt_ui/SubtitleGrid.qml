@@ -100,9 +100,21 @@ Rectangle {
             ScrollBar.vertical: ScrollBar {}
 
             delegate: Rectangle {
+                id: rowDelegate
                 width: listView.width
                 height: grid.rowHeight
-                color: index % 2 === 0 ? "#1f1f1f" : "#242424"
+                property bool isActive: index === gridModel.activeRow
+                color: isActive
+                       ? Qt.rgba(Material.color(Material.Blue).r,
+                                 Material.color(Material.Blue).g,
+                                 Material.color(Material.Blue).b, 0.35)
+                       : (index % 2 === 0 ? "#1f1f1f" : "#242424")
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: gridModel.activeRow = index
+                }
 
                 RowLayout {
                     anchors.fill: parent

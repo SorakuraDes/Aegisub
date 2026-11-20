@@ -25,7 +25,35 @@ void SubtitleGridModel::refresh() {
         for (auto &line : file_->Events)
             rows_.push_back(&line);
     }
+    if (active_row_ >= int(rows_.size()))
+        active_row_ = -1;
     endResetModel();
+    emit activeRowChanged();
+}
+
+int SubtitleGridModel::activeRow() const {
+    return active_row_;
+}
+
+void SubtitleGridModel::setActiveRow(int row) {
+    if (row < -1 || row >= int(rows_.size()))
+        row = -1;
+    if (active_row_ == row)
+        return;
+    active_row_ = row;
+    emit activeRowChanged();
+}
+
+AssDialogue *SubtitleGridModel::getActiveDialogue() {
+    if (active_row_ < 0 || active_row_ >= int(rows_.size()))
+        return nullptr;
+    return rows_[size_t(active_row_)];
+}
+
+void SubtitleGridModel::notifyRowUpdated(int row) {
+    if (row < 0 || row >= int(rows_.size()))
+        return;
+    emit dataChanged(index(row), index(row));
 }
 
 int SubtitleGridModel::rowCount(const QModelIndex &parent) const {

@@ -6,7 +6,7 @@ ApplicationWindow {
     id: mainWindow
     visible: true
     width: 1000
-    height: 640
+    height: 700
     title: "Aegisub Qt6 Test"
 
     Material.theme: Material.Dark
@@ -62,7 +62,7 @@ ApplicationWindow {
         anchors.margins: 12
         spacing: 8
 
-        // Top bar: the former test buttons, kept out of the grid's way.
+        // Top bar: former test buttons, kept out of the grid's way.
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
@@ -89,11 +89,19 @@ ApplicationWindow {
             }
         }
 
-        // The subtitle grid takes over the rest of the window.
+        // The subtitle grid takes over the middle of the window.
         Loader {
+            id: gridLoader
             Layout.fillWidth: true
             Layout.fillHeight: true
             source: "qrc:/SubtitleGrid.qml"
+        }
+
+        // Single-line editor for the selected row.
+        Loader {
+            id: editBoxLoader
+            Layout.fillWidth: true
+            source: "qrc:/EditBox.qml"
         }
     }
 }
