@@ -17,7 +17,8 @@
 | 6 | `0c6882011` | 真实 `.ass` 读写（`AssParser` + `AssSubtitleFormat`，方案 B shim）、`DocumentViewModel`、菜单栏 + `FileDialog`、脏标记/标题、`modelReset` 同步 |
 | 7 | `acdcb2065` | `AssFile::Commit` 统一提交总线 + 轻量 `UndoManager`（快照栈、合并提交、`isModified`）+ 脏标记改由撤销位置推导 + Edit 菜单 / `Ctrl+Z`·`Ctrl+Y` + 未保存确认框；新增 `commit_bridge`（隔离 wxString） |
 | 8A | `b5278c711` | 网格行操作 `insertBefore`/`insertAfter`/`duplicateRow`/`deleteRow`（走 `COMMIT_DIAG_ADDREM`，原生 Undo/Redo）+ 网格右键上下文菜单 + `Subtitle` 菜单 4 项 + 焦点隔离快捷键（`Delete`/`Insert`/`Ctrl+D`） |
-| 8B | 本次工作区改动（未提交） | EditBox 补齐核心字段（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`）+ `availableStyles` + 时长联动 + Enter 键盘流（`Enter` 提交并下一行、`Shift+Enter` 插 `\N`，由 C++ 键过滤器实现）；`EditBox.qml` 重排为两行顶栏 + 正文区 |
+| 8B | `8061f69d5` | EditBox 补齐核心字段（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`）+ `availableStyles` + 时长联动 + Enter 键盘流（`Enter` 提交并下一行、`Shift+Enter` 插 `\N`，由 C++ 键过滤器实现）；`EditBox.qml` 重排为两行顶栏 + 正文区 |
+| 9A | 本次工作区改动（未提交） | 网格多选（`selected_rows_`/`anchor`/`isSelected` role/`selectionCount`、`selectSingle`/`toggleSelect`/`selectRange`/`selectAll`）+ 批量行操作与批量元数据（单次 Commit、一次撤销全部）+ `SearchViewModel`/`SearchDialog.qml` 查找替换（正则/字段/选区范围、`Replace All` 单次提交） |
 
 ## 2. 目录结构
 
@@ -35,6 +36,7 @@ src/qt_ui/
 ├── AboutWindow.qml           # 关于窗口（版本/版权/译员，来自 po/*.mo）
 ├── PreferencesWindow.qml     # 首选项（Backup 页，App/Auto/Save）
 ├── PropertiesWindow.qml      # 脚本配置（Title / PlayResX / PlayResY + 打印 ASS）
+├── SearchDialog.qml          # 非模态查找/替换窗口（Find/Replace 复用同一实例）
 └── viewmodels/
     ├── app_info_vm.{h,cpp}          # 版本号（src/version.cpp + git_version.h）
     ├── about_vm.{h,cpp}             # 关于窗口数据
@@ -44,6 +46,7 @@ src/qt_ui/
     ├── subtitle_grid_model.{h,cpp}  # QAbstractListModel + activeRow + 行操作（插/复制/删）
     ├── edit_box_vm.{h,cpp}          # 选中行全字段双向编辑（文本/时间/时长/元数据）+ Enter 键盘流
     ├── undo_manager.{h,cpp}         # 快照式 Undo/Redo 栈 + 合并提交 + isModified
+    ├── search_vm.{h,cpp}            # 查找/替换（正则、字段、选区范围、单次提交）
     └── document_vm.{h,cpp}          # 文件路径/脏标记/错误 + 打开保存（AssParser/AssSubtitleFormat）
 ```
 
@@ -77,6 +80,8 @@ aegisub_core ──► libaegisub（agi::Path / agi::Options / agi::Time / agi::
 - **焦点隔离快捷键**：`Delete` / `Insert` / `Ctrl+D` 用 QML `Shortcut` 实现，`enabled` 绑 `!textInputFocused()`；`EditBox.qml` 的 `TextArea`/`TextField`/`SpinBox`/`ComboBox`/`CheckBox` 带 `isEditBoxField: true` 标记，`Main.qml` 的 `textInputFocused()` 从 `activeFocusItem` **沿 parent 链**找该标记（SpinBox 聚焦时焦点在它内部的 TextInput 上），避免抢文本框自己的 Delete/插入键操作。网格行的右键上下文菜单在 `SubtitleGrid.qml`（右键先选行再 `popup`，菜单项直接作用于 `gridModel.activeRow`）。
 - **EditBox 字段与键盘流（Stage 8B）**：`EditBoxViewModel` 现在覆盖 `Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`，全部走 `commitEdit()`（`COMMIT_DIAG_META` / `COMMIT_DIAG_TIME`）；因为元数据字段共用 `COMMIT_DIAG_META`，合并提交额外用 `field_key` 分组，避免 1 秒内改两个字段被并成一步。`Duration` 是派生值（`End - Start`，钳到非负），改它只写 `End`，改 `Start`/`End` 会发 `durationChanged()` 让 QML 刷新派生字段。`availableStyles` 在 `modelReset` / `COMMIT_STYLES` / `restored` 时重建（空表回退 `Default`）。`Enter` = 提交并跳下一行（末行自动 `insertAfter` 建行），`Shift+Enter` = 光标处插入字面 `\N`；这两个键由 `main.cpp` 的 `BodyEnterFilter` 转发（原因见坑 20）。
 - **QML 字段回填策略**：EditBox 的输入框**不做属性绑定**，由 `loadSelection()` 显式回填；时间三件套在 `startTimeChanged`/`endTimeChanged`/`durationChanged` 时用 `syncTimeFields()` 只更新**没有焦点**的字段，避免把正在输入的文本按规范化格式覆盖掉（会跳光标）。
+- **多选与批量（Stage 9A）**：`SubtitleGridModel` 维护 `active_row_` + `selected_rows_`（`QSet<int>`）+ `anchor_row_`，新增 `isSelected` role、`selectionCount` 属性以及 `selectSingle` / `toggleSelect` / `selectRange` / `selectAll`；QML 按点击修饰键分派（`Shift`=区间、`Ctrl`=切换、普通=单选、`Ctrl+A`=全选，EditBox 有焦点时不许劫持）。`duplicateSelectedRows()` / `deleteSelectedRows()` 先收集 `AssDialogue*` 再一次性插入或「先摘链再 delete」，**单次** `Commit(COMMIT_DIAG_ADDREM)`，所以一次 `Ctrl+Z` 整体撤销；行结构变化后 `refreshPreservingActiveRow()` 调用 `sanitizeSelection()` 把选中集合校准到合法行号并保证至少选中活动行。EditBox 的元数据字段在多选时对 `metadataTargets()`（全部选中行）批量写入，并以 `single_line = nullptr` 单次提交 `COMMIT_DIAG_META`（正文/时间仍只改活动行）；网格对这类「无 single_line 的内容提交」只发全行 `dataChanged`，不做 model reset，这样撤销合并状态与选中集合都不会被打断。
+- **查找与替换（Stage 9A）**：`SearchViewModel` 独立持有 `AssFile*` + `SubtitleGridModel*`，按 `searchField`（0=Text、1=Actor、2=Effect、3=Style）取字段；普通模式用 `QString::contains`（可选大小写），正则模式用 `QRegularExpression`（非法正则只写 `statusMessage`，不崩溃）。`findNext`/`findPrev` 从活动行环形查找，命中后 `selectSingle` 并发 `locateRow`（QML 里 `positionViewAtIndex`）。`replaceAll` 遍历全表或 `inSelectionOnly` 时的选中行，累计后**单次** `Commit`，状态行报 `Replaced N occurrence(s) in M line(s)`；`replaceCurrent` 替换活动行后自动跳下一处。搜索窗口是独立的非模态 `Window`，`Edit→Find...`（`Ctrl+F`）/`Replace...`（`Ctrl+H`）复用同一实例并聚焦对应输入框，主窗口关闭时一起关闭。
 - **菜单/文件对话框**：`Main.qml` 的 `menuBar` 提供 File（New/Open/Save/Save As/Exit）、Subtitle（Properties）、Tools（Preferences）、Help（About），`QtQuick.Dialogs` 的 `FileDialog` 负责 Open / Save As。
 - **命令行**：`aegisub-qt.exe [file.ass]`，参数存在且是文件则启动即打开，否则 `newDocument()`。
 
@@ -143,6 +148,9 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 20. **`TextArea` 会自己吞掉 `Return`**：`QQuickTextEdit` 在 `keyPressEvent` 里处理 Return 并 accept，QML 的 `Keys.onReturnPressed` / `Keys.onPressed` 根本收不到（这也是 Stage 7 里 `TextArea` 没有 `textEdited` 的同一类问题）。所以 EditBox 的 Enter 流是在 `main.cpp` 里用应用级事件过滤器（`BodyEnterFilter`）接的：它只在焦点对象的 `objectName == "editBoxTextArea"` 时拦截 Return/Shift+Return，再调 `EditBoxViewModel::handleEnterKey()`。`Shift+Enter` 的插入动作交给 QML（`lineBreakRequested` 信号），因为 TextArea 由 QML 拥有。
 21. **输入框不要做双向绑定**：`TextField.text` 一旦被用户编辑，QML 绑定就会被破坏；而「绑定 + 每次 commit 回写」会在用户输入中途把文本按解析后的规范格式覆盖（光标跳到末尾）。做法是 `loadSelection()` 显式回填 + 值相等就跳过，跨字段联动（Start/End/Duration）只更新**没有焦点**的那个字段。注意两个方向要分开：**外部变更**（undo/redo、切换行）必须**强制**回填所有字段，哪怕光标就在那个框里，否则撤销后框里还显示旧值；只有**自身编辑**引起的联动刷新才跳过有焦点的字段。
 22. **SpinBox 的键盘焦点在它内部的 TextInput 上**：可编辑 `SpinBox` 聚焦时 `Window.activeFocusItem` 是它的 contentItem（`TextInput`），不是 `SpinBox` 本身，所以焦点隔离判断不能只看当前 item 的标记属性，要沿 `parent` 链向上找 `isEditBoxField`，否则在 Layer 框里按 `Insert` 会漏到网格行快捷键上。
+23. **批量修改多行要传 `single_line = nullptr`**：网格的 `onFileCommitted` 对「带 single_line 的内容提交」只对那一行发 `dataChanged`；批量改多行如果不传 nullptr，就只有活动行会重绘，其余行还是旧值。传 nullptr 时网格对全部行发 `dataChanged`（**不要**在这里做 model reset，原因见坑 25）。
+24. **行号型选中集合必须重新校准**：`selected_rows_` 存的是行号，删除/插入/撤销会改变行号含义，`refreshPreservingActiveRow()` 里必须 `sanitizeSelection()`（丢弃越界、保证有行时至少选中一行），否则 EditBox 的批量目标与 `selectionCount` 会指向错误行甚至越界。
+25. **内容类批量提交不能触发 `modelReset`**：`EditBoxViewModel` 在 `modelReset` 里会 `resetCoalescing()`。批量元数据提交是 `single_line = nullptr`（网格拿不到具体行），如果为此走全量 `refreshPreservingActiveRow()`，逐字符输入会被打断成「一个按键一步撤销」。正确做法：内容类提交（`COMMIT_DIAG_FULL`，含批量元数据与 Replace All）只发全行 `dataChanged`；只有结构性提交（`COMMIT_DIAG_ADDREM` / `COMMIT_ORDER` / `COMMIT_STYLES` / `COMMIT_NEW`）才 reset 索引。
 
 ## 6. 已知限制（下一步工作）
 
@@ -150,7 +158,8 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 - **Edit 菜单不显示快捷键文本**：Qt Quick Controls 的 `MenuItem` 不渲染 `Action.shortcut` 的文本（Qt Widgets 的 QMenu 才会），所以菜单里只有 `Undo` / `Redo <desc>`，看不到 `Ctrl+Z`/`Ctrl+Y` 提示；快捷键本身由 `main.cpp` 的事件过滤器实现并已验证（要提示得给两个菜单项写自定义 `contentItem`）。
 - **撤销粒度**：快照式 undo 每次提交都深拷贝整个 `AssFile`（1000ms 合并窗口内只保留一份），大文件 + 高频输入时内存/CPU 有开销；栈上限 100 步，保存点被挤出后文档会一直显示「已修改」。
 - **EditBox 仍缺的字段/交互**：没有 `MarginL/MarginR/MarginV` 三个边距、没有时间微调按钮（±10ms/±帧）与「按帧编辑」、没有自动定位到视频时间；`availableStyles` 只来自当前文件的 `[V4+ Styles]`（不读样式库）；新增字段的 UI 文案（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`/`chars`）还没进 po，实际显示英文。
-- **网格操作仍是最小集**：已支持插行 / 复制 / 删行（含 Undo/Redo），但排序、多选、折叠、拖拽都未实现；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 仍是全量 `beginResetModel`，行数很多时每次增删都要整体重绘。
+- **网格操作仍有缺口**：已支持插行 / 复制 / 删行 / 多选批量操作（含 Undo/Redo），但键盘范围选择（`Shift+↑/↓`）、拖拽框选、列排序、行折叠、跨行拖动都没做；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 仍是全量 `beginResetModel`，行数很多时每次增删都要整体重绘。
+- **查找替换限制**：只在当前文件内搜索（没有跨文件/批量目录替换）；命中只是选中整行，网格里不会高亮具体匹配片段；普通模式替换是字面量（正则模式用 `\1` 反向引用，不支持 `$1` 写法）；`In selection` 只在有多选时生效。
 - **大文件性能**：`ListView` 已复用 delegate，但尚无分页/滚动加载。
 - **没有最近文件列表 / 另存时的编码选择器**（当前保存固定 UTF-8，打开时自动检测）。
 - **未保存确认框**：`Save` 分支里如果用户取消了「另存为」系统对话框，原动作（New/Open/退出）会停住而不是继续/中止；没有「稍后再说」以外的记忆。
@@ -193,3 +202,11 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
     - 焦点隔离覆盖 `SpinBox`/`ComboBox`/`CheckBox`：Layer 框内按 `Insert`/`Delete` 不再增删行，点网格行后快捷键照常可用；
     - 布局：1000x700 客户区下元数据行 / 时间行 / 正文区全部完整可见（EditBox 约 176px 实际高度，无裁剪、无浮动占位符溢出）；
     - 回归：行操作、文本撤销、未保存确认框、元数据保存重开均无损。
+  - Stage 9A（多选批量 + 查找替换，脚本/截图在 `.build-tools/stage9a/`，不入库；用副本 `test_multi.ass`）：
+    - `Shift+Click` 选 1–3 行 → 活动行深蓝、其余选中行浅蓝，`Ctrl+Click` 切换不把选择清空，`Ctrl+A` 全选 5 行且 EditBox 内 `Ctrl+A` 只选文本不影响行选择；
+    - 批量 `Comment`：3 行同时变灰（文本列亮度 151/154/186 → 97/97/115），**一次** `Ctrl+Z` 三行同时恢复；
+    - 批量 `Delete`：5→3 行，一次撤销回到 5 行且逐行内容与 ASS 一致；批量 `Ctrl+D`：5→7，一次撤销复原；
+    - 批量元数据（Actor/Effect/Layer）：3 行同时应用并**一次撤销全部恢复**（修复前逐字符一步），且选中集合在批量编辑后保留；
+    - `Ctrl+F` 打开非模态 `Find & Replace`：`Find Next`/`Find Prev` 选中并滚动定位（状态 `Line N`）；
+    - `Replace All`（普通/正则/`In selection`）：状态 `Replaced N occurrence(s) in M line(s)`，一次 `Ctrl+Z` 全部撤销；正则非法只显示 `Invalid regular expression` 不崩溃；`Replace` 替换当前命中并跳到下一处；
+    - `Esc` 关闭搜索窗，`Edit→Find/Replace` 复用同一实例并聚焦对应输入框，关闭主窗口时搜索窗一起关闭、进程退出。

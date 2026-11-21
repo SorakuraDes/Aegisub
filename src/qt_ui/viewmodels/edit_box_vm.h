@@ -4,6 +4,7 @@
 // Qt header for the same reason ass_file.h is included first in the .cpp.
 #include <libaegisub/signal.h>
 
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -108,7 +109,15 @@ private:
     void resetCoalescing();
     /// Commit an edit of `line`. `field_key` keeps the coalescing groups of
     /// different metadata fields apart (they all share COMMIT_DIAG_META).
+    /// `line` is the single line the commit refers to, or nullptr for a batch
+    /// edit of all selected rows.
     void commitEdit(const QString &description, int type, AssDialogue *line, int field_key);
+    /// Rows a metadata edit applies to: every selected row when more than one
+    /// is selected, otherwise just the active line.
+    QList<AssDialogue *> metadataTargets() const;
+    /// Commit a metadata edit for `targets` with a single AssFile::Commit.
+    void commitMetadata(const QString &description, int field_key,
+                        const QList<AssDialogue *> &targets);
     void refreshAvailableStyles();
 
     /// AssFile::AnnounceCommit slot: an external commit changed the file.

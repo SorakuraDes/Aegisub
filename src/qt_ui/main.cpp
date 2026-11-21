@@ -9,6 +9,7 @@
 #include "viewmodels/edit_box_vm.h"
 #include "viewmodels/preferences_vm.h"
 #include "viewmodels/properties_vm.h"
+#include "viewmodels/search_vm.h"
 #include "viewmodels/subtitle_grid_model.h"
 #include "viewmodels/translation_service.h"
 #include "viewmodels/undo_manager.h"
@@ -154,6 +155,7 @@ int main(int argc, char *argv[]) {
     SubtitleGridModel gridModel(&script, &undoManager);
     EditBoxViewModel editBoxVM(&gridModel, &script, &undoManager);
     DocumentViewModel documentVM(&script, &gridModel, &undoManager);
+    SearchViewModel searchVM(&script, &gridModel);
 
     UndoShortcutFilter undoFilter(&undoManager);
     app.installEventFilter(&undoFilter);
@@ -172,6 +174,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("editBoxVM", &editBoxVM);
     engine.rootContext()->setContextProperty("documentVM", &documentVM);
     engine.rootContext()->setContextProperty("undoVM", &undoManager);
+    engine.rootContext()->setContextProperty("searchVM", &searchVM);
 
     // Optional first command line argument: a subtitle file to open.
     const QStringList args = QCoreApplication::arguments();

@@ -65,6 +65,34 @@ void SubtitleGridModel::rebuildRows() {
         rows_.push_back(&line);
 }
 
+void SubtitleGridModel::emitSelectionChanged() {
+    if (rows_.empty())
+        return;
+    emit dataChanged(index(0), index(int(rows_.size()) - 1), {SelectedRole});
+}
+
+void SubtitleGridModel::sanitizeSelection() {
+    const int count = int(rows_.size());
+
+    QSet<int> selection;
+    for (int row : selected_rows_) {
+        if (row >= 0 && row < count)
+            selection.insert(row);
+    }
+    // The grid always has an active line selected while it has lines.
+    if (selection.isEmpty() && count > 0)
+        selection.insert(active_row_ >= 0 && active_row_ < count ? active_row_ : 0);
+
+    if (selection != selected_rows_) {
+        selected_rows_ = selection;
+        emit selectionCountChanged();
+        emitSelectionChanged();
+    }
+
+    if (anchor_row_ < 0 || anchor_row_ >= count)
+        anchor_row_ = active_row_;
+}
+
 void SubtitleGridModel::refresh() {
     beginResetModel();
     rebuildRows();
@@ -73,10 +101,18 @@ void SubtitleGridModel::refresh() {
     // Non-empty models start with the first line selected, empty ones have no
     // selection. Emit only on an actual change so listeners see a stable state.
     const int new_active = rows_.empty() ? -1 : 0;
-    if (active_row_ != new_active) {
-        active_row_ = new_active;
+    const bool active_changed = active_row_ != new_active;
+
+    active_row_ = new_active;
+    selected_rows_.clear();
+    if (new_active >= 0)
+        selected_rows_.insert(new_active);
+    anchor_row_ = new_active;
+
+    emit selectionCountChanged();
+    emitSelectionChanged();
+    if (active_changed)
         emit activeRowChanged();
-    }
 }
 
 void SubtitleGridModel::refreshPreservingActiveRow() {
@@ -96,6 +132,9 @@ void SubtitleGridModel::refreshPreservingActiveRow() {
         active_row_ = new_active;
         emit activeRowChanged();
     }
+
+    // The rows moved (or disappeared) under the selection: clamp it.
+    sanitizeSelection();
 }
 
 int SubtitleGridModel::indexOf(const AssDialogue *line) const {
@@ -138,8 +177,12 @@ void SubtitleGridModel::onFileCommitted(int type, const AssDialogue *single_line
     if ((type & AssFile::COMMIT_DIAG_FULL) == 0)
         return;
 
-    // A dialogue change that did not identify the affected line: rebuild.
-    refreshPreservingActiveRow();
+    // A content change that did not identify the affected line (batch metadata
+    // edit of a multi-row selection, replace-all): repaint the rows in place.
+    // A full model reset here would also reset the edit box's coalescing state
+    // and turn one typed batch edit into one undo step per keystroke.
+    if (!rows_.empty())
+        emit dataChanged(index(0), index(int(rows_.size()) - 1));
 }
 
 void SubtitleGridModel::onRestored() {
@@ -151,19 +194,127 @@ int SubtitleGridModel::activeRow() const {
     return active_row_;
 }
 
-void SubtitleGridModel::setActiveRow(int row) {
-    if (row < -1 || row >= int(rows_.size()))
-        row = -1;
-    if (active_row_ == row)
-        return;
-    active_row_ = row;
-    emit activeRowChanged();
+int SubtitleGridModel::selectionCount() const {
+    return int(selected_rows_.size());
+}
+
+const QSet<int> &SubtitleGridModel::selectedRows() const {
+    return selected_rows_;
+}
+
+QList<int> SubtitleGridModel::sortedSelectedRows() const {
+    QList<int> rows = selected_rows_.values();
+    std::sort(rows.begin(), rows.end());
+    return rows;
 }
 
 AssDialogue *SubtitleGridModel::getActiveDialogue() {
     if (active_row_ < 0 || active_row_ >= int(rows_.size()))
         return nullptr;
     return rows_[size_t(active_row_)];
+}
+
+AssDialogue *SubtitleGridModel::dialogueAt(int row) const {
+    if (row < 0 || row >= int(rows_.size()))
+        return nullptr;
+    return rows_[size_t(row)];
+}
+
+void SubtitleGridModel::applySelection(const QSet<int> &selection, int active) {
+    const bool selection_changed = selected_rows_ != selection;
+    selected_rows_ = selection;
+
+    const bool active_changed = active_row_ != active;
+    active_row_ = active;
+
+    if (selection_changed) {
+        emit selectionCountChanged();
+        emitSelectionChanged();
+    }
+    if (active_changed)
+        emit activeRowChanged();
+}
+
+void SubtitleGridModel::selectOnly(int row) {
+    QSet<int> selection;
+    if (row >= 0)
+        selection.insert(row);
+    anchor_row_ = row;
+    applySelection(selection, row);
+}
+
+void SubtitleGridModel::selectSingle(int row) {
+    if (row < -1 || row >= int(rows_.size()))
+        row = -1;
+    selectOnly(row);
+}
+
+void SubtitleGridModel::toggleSelect(int row) {
+    if (row < 0 || row >= int(rows_.size()))
+        return;
+
+    QSet<int> selection = selected_rows_;
+    if (selection.contains(row))
+        selection.remove(row);
+    else
+        selection.insert(row);
+
+    // Keep at least one line selected while the grid has lines.
+    if (selection.isEmpty())
+        selection.insert(row);
+
+    int active = row;
+    if (!selection.contains(active))
+        active = *std::min_element(selection.begin(), selection.end());
+
+    anchor_row_ = row;
+    applySelection(selection, active);
+}
+
+void SubtitleGridModel::selectRange(int row) {
+    if (rows_.empty())
+        return;
+
+    row = std::clamp(row, 0, int(rows_.size()) - 1);
+    const int anchor = (anchor_row_ >= 0 && anchor_row_ < int(rows_.size())) ? anchor_row_ : row;
+    const int lo = std::min(anchor, row);
+    const int hi = std::max(anchor, row);
+
+    QSet<int> selection;
+    for (int i = lo; i <= hi; ++i)
+        selection.insert(i);
+
+    // The anchor stays where the range started, so a further Shift+Click grows
+    // or shrinks the same range.
+    anchor_row_ = anchor;
+    applySelection(selection, row);
+}
+
+void SubtitleGridModel::selectAll() {
+    const int count = int(rows_.size());
+    if (count == 0)
+        return;
+
+    QSet<int> selection;
+    for (int i = 0; i < count; ++i)
+        selection.insert(i);
+
+    const int active = (active_row_ >= 0 && active_row_ < count) ? active_row_ : 0;
+    if (anchor_row_ < 0 || anchor_row_ >= count)
+        anchor_row_ = active;
+    applySelection(selection, active);
+}
+
+void SubtitleGridModel::setActiveRow(int row) {
+    if (row < -1 || row >= int(rows_.size()))
+        row = -1;
+
+    // Moving the active row with the keyboard collapses the selection to it.
+    anchor_row_ = row;
+    QSet<int> selection;
+    if (row >= 0)
+        selection.insert(row);
+    applySelection(selection, row);
 }
 
 void SubtitleGridModel::notifyRowUpdated(int row) {
@@ -202,6 +353,8 @@ QVariant SubtitleGridModel::data(const QModelIndex &index, int role) const {
             return QString::fromStdString(line->Text.get());
         case CommentRole:
             return line->Comment;
+        case SelectedRole:
+            return selected_rows_.contains(index.row());
         default:
             return {};
     }
@@ -218,6 +371,7 @@ QHash<int, QByteArray> SubtitleGridModel::roleNames() const {
         { EffectRole, "effect" },
         { TextRole, "text" },
         { CommentRole, "isComment" },
+        { SelectedRole, "isSelected" },
     };
 }
 
@@ -236,7 +390,7 @@ void SubtitleGridModel::commitRowChange(const QString &description, AssDialogue 
 int SubtitleGridModel::selectLine(AssDialogue *line) {
     const int index = indexOf(line);
     if (index >= 0)
-        setActiveRow(index);
+        selectOnly(index);
     return index;
 }
 
@@ -322,6 +476,54 @@ int SubtitleGridModel::duplicateRow(int row) {
     return selectLine(copy);
 }
 
+int SubtitleGridModel::duplicateSelectedRows() {
+    if (!file_ || rows_.empty())
+        return 0;
+
+    QList<int> selected = sortedSelectedRows();
+    if (selected.isEmpty()) {
+        if (active_row_ < 0)
+            return 0;
+        selected << active_row_;
+    }
+
+    // Take the pointers first: the row indices shift with every insert, the
+    // AssDialogue pointers do not.
+    std::vector<AssDialogue *> targets;
+    for (int row : selected) {
+        if (row >= 0 && row < int(rows_.size()))
+            targets.push_back(rows_[size_t(row)]);
+    }
+    if (targets.empty())
+        return 0;
+
+    std::vector<AssDialogue *> copies;
+    for (auto *source : targets) {
+        auto *copy = new AssDialogue(*source);
+        auto pos = file_->Events.iterator_to(*source);
+        file_->Events.insert(++pos, *copy);
+        copies.push_back(copy);
+    }
+
+    // One commit for the whole batch: a single Ctrl+Z undoes all copies.
+    commitRowChange(QStringLiteral("Duplicate lines"));
+
+    QSet<int> selection;
+    for (auto *copy : copies) {
+        const int index = indexOf(copy);
+        if (index >= 0)
+            selection.insert(index);
+    }
+
+    int active = -1;
+    if (!selection.isEmpty())
+        active = *std::min_element(selection.begin(), selection.end());
+    anchor_row_ = active;
+    applySelection(selection, active);
+
+    return int(copies.size());
+}
+
 void SubtitleGridModel::deleteRow(int row) {
     if (!file_ || rows_.empty())
         return;
@@ -346,5 +548,44 @@ void SubtitleGridModel::deleteRow(int row) {
 
     // Commit rebuilt rows_; land on the line which took the deleted one's place,
     // or on the previous line when the last row went away.
-    setActiveRow(rows_.empty() ? -1 : std::min(row, int(rows_.size()) - 1));
+    selectOnly(rows_.empty() ? -1 : std::min(row, int(rows_.size()) - 1));
+}
+
+int SubtitleGridModel::deleteSelectedRows() {
+    if (!file_ || rows_.empty())
+        return 0;
+
+    QList<int> selected = sortedSelectedRows();
+    if (selected.isEmpty()) {
+        if (active_row_ < 0)
+            return 0;
+        selected << active_row_;
+    }
+
+    std::vector<AssDialogue *> targets;
+    for (int row : selected) {
+        if (row >= 0 && row < int(rows_.size()))
+            targets.push_back(rows_[size_t(row)]);
+    }
+    if (targets.empty())
+        return 0;
+
+    // Unlink everything before freeing anything, so the intrusive list is
+    // consistent for the UndoManager snapshot taken by Commit.
+    for (auto *target : targets)
+        file_->Events.erase(file_->Events.iterator_to(*target));
+    for (auto *target : targets)
+        delete target;
+
+    if (file_->Events.empty()) {
+        auto *replacement = new AssDialogue;
+        replacement->End = defaultDurationMs();
+        file_->Events.push_back(*replacement);
+    }
+
+    // One commit for the whole batch: a single Ctrl+Z brings every line back.
+    commitRowChange(QStringLiteral("Delete lines"));
+
+    selectOnly(rows_.empty() ? -1 : std::min(selected.first(), int(rows_.size()) - 1));
+    return int(targets.size());
 }

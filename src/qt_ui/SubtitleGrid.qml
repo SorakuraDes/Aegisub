@@ -33,13 +33,22 @@ Rectangle {
         MenuSeparator {}
         MenuItem {
             text: i18n.t("Duplicate")
-            enabled: gridModel.activeRow >= 0
-            onClicked: gridModel.duplicateRow(gridModel.activeRow)
+            enabled: gridModel.selectionCount > 0
+            onClicked: gridModel.duplicateSelectedRows()
         }
         MenuItem {
             text: i18n.t("Delete")
-            enabled: gridModel.activeRow >= 0
-            onClicked: gridModel.deleteRow(gridModel.activeRow)
+            enabled: gridModel.selectionCount > 0
+            onClicked: gridModel.deleteSelectedRows()
+        }
+    }
+
+    // The search dialog asks the grid to bring a match into view.
+    Connections {
+        target: searchVM
+        function onLocateRow(row) {
+            if (row >= 0)
+                listView.positionViewAtIndex(row, ListView.Contain)
         }
     }
 
@@ -131,27 +140,44 @@ Rectangle {
                 width: listView.width
                 height: grid.rowHeight
                 property bool isActive: index === gridModel.activeRow
+                property bool isSelected: model.isSelected === true
                 color: isActive
                        ? Qt.rgba(Material.color(Material.Blue).r,
                                  Material.color(Material.Blue).g,
                                  Material.color(Material.Blue).b, 0.35)
-                       : (index % 2 === 0 ? "#1f1f1f" : "#242424")
+                       : (isSelected
+                          ? Qt.rgba(Material.color(Material.Blue).r,
+                                    Material.color(Material.Blue).g,
+                                    Material.color(Material.Blue).b, 0.18)
+                          : (index % 2 === 0 ? "#1f1f1f" : "#242424"))
 
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: function(mouse) {
-                        // Both buttons select the row first; the right one then
-                        // opens the row actions at the cursor. Clicking the grid
-                        // also takes keyboard focus away from the EditBox fields
-                        // so that Delete/Insert/Ctrl+D act on rows, not text.
-                        gridModel.activeRow = index
+                        // Clicking the grid takes keyboard focus away from the
+                        // EditBox fields so that Delete/Insert/Ctrl+D act on
+                        // rows, and Ctrl+A selects rows instead of text.
                         listView.forceActiveFocus()
+
                         if (mouse.button === Qt.RightButton) {
+                            // Right-clicking a row that is already part of the
+                            // selection keeps that selection; otherwise make the
+                            // row the selection first.
+                            if (!rowDelegate.isSelected)
+                                gridModel.selectSingle(index)
                             var pos = rowDelegate.mapToItem(grid, mouse.x, mouse.y)
                             rowMenu.popup(pos.x, pos.y)
+                            return
                         }
+
+                        if (mouse.modifiers & Qt.ShiftModifier)
+                            gridModel.selectRange(index)
+                        else if (mouse.modifiers & Qt.ControlModifier)
+                            gridModel.toggleSelect(index)
+                        else
+                            gridModel.selectSingle(index)
                     }
                 }
 

@@ -6,5 +6,6 @@
     <file>AboutWindow.qml</file>
     <file>PreferencesWindow.qml</file>
     <file>PropertiesWindow.qml</file>
+    <file>SearchDialog.qml</file>
   </qresource>
 </RCC>

@@ -181,7 +181,7 @@ void EditBoxViewModel::onRestored() {
 
 void EditBoxViewModel::commitEdit(const QString &description, int type, AssDialogue *line,
                                   int field_key) {
-    if (!file_ || !line)
+    if (!file_)
         return;
 
     // Switching line or field starts a new undo step even inside the timer
@@ -197,6 +197,31 @@ void EditBoxViewModel::commitEdit(const QString &description, int type, AssDialo
     commit_id_ = aegisub_qt::commit(file_, toStdString(description), type, commit_id_, line);
 
     coalesce_timer_.start();
+}
+
+QList<AssDialogue *> EditBoxViewModel::metadataTargets() const {
+    QList<AssDialogue *> targets;
+    if (model_ && file_ && model_->selectionCount() > 1) {
+        for (int row : model_->sortedSelectedRows()) {
+            if (auto *line = model_->dialogueAt(row))
+                targets << line;
+        }
+    }
+    if (targets.isEmpty()) {
+        if (auto *line = active())
+            targets << line;
+    }
+    return targets;
+}
+
+void EditBoxViewModel::commitMetadata(const QString &description, int field_key,
+                                      const QList<AssDialogue *> &targets) {
+    if (targets.isEmpty())
+        return;
+    // A batch edit is a single commit with no single_line, so the grid rebuilds
+    // and every selected row repaints; one Ctrl+Z undoes all of them.
+    commitEdit(description, AssFile::COMMIT_DIAG_META,
+               targets.size() > 1 ? nullptr : targets.first(), field_key);
 }
 
 void EditBoxViewModel::commitAndNextLine() {
@@ -318,11 +343,17 @@ bool EditBoxViewModel::comment() const {
 }
 
 void EditBoxViewModel::setComment(bool value) {
-    AssDialogue *line = active();
-    if (!line || line->Comment == value)
+    const QList<AssDialogue *> targets = metadataTargets();
+    bool changed = false;
+    for (auto *line : targets) {
+        if (line->Comment != value) {
+            line->Comment = value;
+            changed = true;
+        }
+    }
+    if (!changed)
         return;
-    line->Comment = value;
-    commitEdit(QStringLiteral("Toggle comment"), AssFile::COMMIT_DIAG_META, line, kFieldComment);
+    commitMetadata(QStringLiteral("Toggle comment"), kFieldComment, targets);
     emit commentChanged();
 }
 
@@ -332,14 +363,18 @@ int EditBoxViewModel::layer() const {
 }
 
 void EditBoxViewModel::setLayer(int value) {
-    AssDialogue *line = active();
-    if (!line)
-        return;
+    const QList<AssDialogue *> targets = metadataTargets();
     const int clamped = std::max(0, value);
-    if (line->Layer == clamped)
+    bool changed = false;
+    for (auto *line : targets) {
+        if (line->Layer != clamped) {
+            line->Layer = clamped;
+            changed = true;
+        }
+    }
+    if (!changed)
         return;
-    line->Layer = clamped;
-    commitEdit(QStringLiteral("Edit layer"), AssFile::COMMIT_DIAG_META, line, kFieldLayer);
+    commitMetadata(QStringLiteral("Edit layer"), kFieldLayer, targets);
     emit layerChanged();
 }
 
@@ -349,14 +384,18 @@ QString EditBoxViewModel::style() const {
 }
 
 void EditBoxViewModel::setStyle(const QString &value) {
-    AssDialogue *line = active();
-    if (!line)
-        return;
+    const QList<AssDialogue *> targets = metadataTargets();
     const std::string new_style = toStdString(value);
-    if (line->Style.get() == new_style)
+    bool changed = false;
+    for (auto *line : targets) {
+        if (line->Style.get() != new_style) {
+            line->Style = new_style;
+            changed = true;
+        }
+    }
+    if (!changed)
         return;
-    line->Style = new_style;
-    commitEdit(QStringLiteral("Edit style"), AssFile::COMMIT_DIAG_META, line, kFieldStyle);
+    commitMetadata(QStringLiteral("Edit style"), kFieldStyle, targets);
     emit styleChanged();
 }
 
@@ -366,14 +405,18 @@ QString EditBoxViewModel::actor() const {
 }
 
 void EditBoxViewModel::setActor(const QString &value) {
-    AssDialogue *line = active();
-    if (!line)
-        return;
+    const QList<AssDialogue *> targets = metadataTargets();
     const std::string new_actor = toStdString(value);
-    if (line->Actor.get() == new_actor)
+    bool changed = false;
+    for (auto *line : targets) {
+        if (line->Actor.get() != new_actor) {
+            line->Actor = new_actor;
+            changed = true;
+        }
+    }
+    if (!changed)
         return;
-    line->Actor = new_actor;
-    commitEdit(QStringLiteral("Edit actor"), AssFile::COMMIT_DIAG_META, line, kFieldActor);
+    commitMetadata(QStringLiteral("Edit actor"), kFieldActor, targets);
     emit actorChanged();
 }
 
@@ -383,13 +426,17 @@ QString EditBoxViewModel::effect() const {
 }
 
 void EditBoxViewModel::setEffect(const QString &value) {
-    AssDialogue *line = active();
-    if (!line)
-        return;
+    const QList<AssDialogue *> targets = metadataTargets();
     const std::string new_effect = toStdString(value);
-    if (line->Effect.get() == new_effect)
+    bool changed = false;
+    for (auto *line : targets) {
+        if (line->Effect.get() != new_effect) {
+            line->Effect = new_effect;
+            changed = true;
+        }
+    }
+    if (!changed)
         return;
-    line->Effect = new_effect;
-    commitEdit(QStringLiteral("Edit effect"), AssFile::COMMIT_DIAG_META, line, kFieldEffect);
+    commitMetadata(QStringLiteral("Edit effect"), kFieldEffect, targets);
     emit effectChanged();
 }

@@ -16,6 +16,7 @@ ApplicationWindow {
     property var aboutWindow: null
     property var preferencesWindow: null
     property var propertiesWindow: null
+    property var searchWindow: null
 
     // Pending File-menu action while the unsaved-changes dialog is up, and the
     // action to resume once a (possibly Save As) save finished.
@@ -63,6 +64,42 @@ ApplicationWindow {
         win.show()
         win.raise()
         win.requestActivate()
+    }
+
+    // Non-modal Find & Replace window; both menu entries reuse the same
+    // instance and just move the focus to the matching input.
+    function openSearch(useReplace) {
+        if (searchWindow === null) {
+            var component = Qt.createComponent("qrc:/SearchDialog.qml")
+            if (component.status !== Component.Ready) {
+                console.error("Failed to load SearchDialog.qml", component.errorString())
+                return
+            }
+            searchWindow = component.createObject(null)
+        }
+        searchWindow.show()
+        searchWindow.raise()
+        searchWindow.requestActivate()
+        searchWindow.focusField(useReplace)
+    }
+
+    function closeChildWindows() {
+        if (searchWindow !== null) {
+            searchWindow.close()
+            searchWindow = null
+        }
+        if (aboutWindow !== null) {
+            aboutWindow.close()
+            aboutWindow = null
+        }
+        if (preferencesWindow !== null) {
+            preferencesWindow.close()
+            preferencesWindow = null
+        }
+        if (propertiesWindow !== null) {
+            propertiesWindow.close()
+            propertiesWindow = null
+        }
     }
 
     function saveDocument() {
@@ -125,14 +162,19 @@ ApplicationWindow {
         if (!forceClose && documentVM.dirty) {
             close.accepted = false
             requestAction("quit")
+            return
         }
+        // Do not leave the auxiliary windows (search, properties, ...) open:
+        // they would keep the application alive after the main window closes.
+        closeChildWindows()
     }
 
     // Row actions from the keyboard, kept away from the text editors above.
+    // Delete / Ctrl+D act on the whole selection.
     Shortcut {
         sequence: "Delete"
-        enabled: !mainWindow.textInputFocused() && gridModel.activeRow >= 0
-        onActivated: gridModel.deleteRow(gridModel.activeRow)
+        enabled: !mainWindow.textInputFocused() && gridModel.selectionCount > 0
+        onActivated: gridModel.deleteSelectedRows()
     }
     Shortcut {
         sequence: "Insert"
@@ -141,8 +183,13 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+D"
-        enabled: !mainWindow.textInputFocused() && gridModel.activeRow >= 0
-        onActivated: gridModel.duplicateRow(gridModel.activeRow)
+        enabled: !mainWindow.textInputFocused() && gridModel.selectionCount > 0
+        onActivated: gridModel.duplicateSelectedRows()
+    }
+    Shortcut {
+        sequence: StandardKey.SelectAll
+        enabled: !mainWindow.textInputFocused()
+        onActivated: gridModel.selectAll()
     }
 
     menuBar: MenuBar {
@@ -196,6 +243,17 @@ ApplicationWindow {
                 enabled: undoVM.canRedo
                 onTriggered: undoVM.redo()
             }
+            MenuSeparator {}
+            Action {
+                text: "&Find..."
+                shortcut: StandardKey.Find
+                onTriggered: mainWindow.openSearch(false)
+            }
+            Action {
+                text: "&Replace..."
+                shortcut: StandardKey.Replace
+                onTriggered: mainWindow.openSearch(true)
+            }
         }
 
         Menu {
@@ -211,13 +269,13 @@ ApplicationWindow {
             MenuSeparator {}
             Action {
                 text: "D&uplicate"
-                enabled: gridModel.activeRow >= 0
-                onTriggered: gridModel.duplicateRow(gridModel.activeRow)
+                enabled: gridModel.selectionCount > 0
+                onTriggered: gridModel.duplicateSelectedRows()
             }
             Action {
                 text: "De&lete"
-                enabled: gridModel.activeRow >= 0
-                onTriggered: gridModel.deleteRow(gridModel.activeRow)
+                enabled: gridModel.selectionCount > 0
+                onTriggered: gridModel.deleteSelectedRows()
             }
             MenuSeparator {}
             Action {
