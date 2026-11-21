@@ -80,6 +80,49 @@ private:
     UndoManager *undo_;
 };
 
+/// Set as the `objectName` of the body TextArea in EditBox.qml.
+constexpr const char kBodyEditorObjectName[] = "editBoxTextArea";
+
+/// Forwards Enter / Shift+Enter from the body TextArea to EditBoxViewModel.
+///
+/// QQuickTextArea consumes Return itself (it inserts a newline and accepts the
+/// event) before QML `Keys` attached handlers are consulted, so
+/// `Keys.onReturnPressed` on the TextArea never fires. An application-level
+/// filter sees the KeyPress first and handles it deterministically.
+class BodyEnterFilter final : public QObject {
+public:
+    explicit BodyEnterFilter(EditBoxViewModel *editBox, QObject *parent = nullptr)
+    : QObject(parent)
+    , editBox_(editBox)
+    {
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        Q_UNUSED(watched);
+
+        if (event->type() != QEvent::KeyPress)
+            return false;
+
+        auto *key_event = static_cast<QKeyEvent *>(event);
+        if (key_event->key() != Qt::Key_Return && key_event->key() != Qt::Key_Enter)
+            return false;
+
+        QObject *focus = QGuiApplication::focusObject();
+        if (!focus || focus->objectName() != QLatin1String(kBodyEditorObjectName))
+            return false;
+
+        if (!key_event->isAutoRepeat())
+            editBox_->handleEnterKey(key_event->modifiers().testFlag(Qt::ShiftModifier));
+
+        event->accept();
+        return true;
+    }
+
+private:
+    EditBoxViewModel *editBox_;
+};
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -114,6 +157,10 @@ int main(int argc, char *argv[]) {
 
     UndoShortcutFilter undoFilter(&undoManager);
     app.installEventFilter(&undoFilter);
+
+    // The body TextArea eats Return itself; see BodyEnterFilter.
+    BodyEnterFilter bodyEnterFilter(&editBoxVM);
+    app.installEventFilter(&bodyEnterFilter);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("i18n", &i18n);

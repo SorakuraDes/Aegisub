@@ -16,7 +16,8 @@
 | 5 | `785db8cbd` | 行选中 `activeRow`、`EditBoxViewModel` 双向编辑、`EditBox.qml`，网格实时刷新；本文件 |
 | 6 | `0c6882011` | 真实 `.ass` 读写（`AssParser` + `AssSubtitleFormat`，方案 B shim）、`DocumentViewModel`、菜单栏 + `FileDialog`、脏标记/标题、`modelReset` 同步 |
 | 7 | `acdcb2065` | `AssFile::Commit` 统一提交总线 + 轻量 `UndoManager`（快照栈、合并提交、`isModified`）+ 脏标记改由撤销位置推导 + Edit 菜单 / `Ctrl+Z`·`Ctrl+Y` + 未保存确认框；新增 `commit_bridge`（隔离 wxString） |
-| 8A | 本次工作区改动（未提交） | 网格行操作 `insertBefore`/`insertAfter`/`duplicateRow`/`deleteRow`（走 `COMMIT_DIAG_ADDREM`，原生 Undo/Redo）+ 网格右键上下文菜单 + `Subtitle` 菜单 4 项 + 焦点隔离快捷键（`Delete`/`Insert`/`Ctrl+D`） |
+| 8A | `b5278c711` | 网格行操作 `insertBefore`/`insertAfter`/`duplicateRow`/`deleteRow`（走 `COMMIT_DIAG_ADDREM`，原生 Undo/Redo）+ 网格右键上下文菜单 + `Subtitle` 菜单 4 项 + 焦点隔离快捷键（`Delete`/`Insert`/`Ctrl+D`） |
+| 8B | 本次工作区改动（未提交） | EditBox 补齐核心字段（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`）+ `availableStyles` + 时长联动 + Enter 键盘流（`Enter` 提交并下一行、`Shift+Enter` 插 `\N`，由 C++ 键过滤器实现）；`EditBox.qml` 重排为两行顶栏 + 正文区 |
 
 ## 2. 目录结构
 
@@ -41,7 +42,7 @@ src/qt_ui/
     ├── preferences_vm.{h,cpp}       # agi::Options 读写（OPT_GET/OPT_SET）
     ├── properties_vm.{h,cpp}        # AssFile::Get/SetScriptInfo + dumpAss()
     ├── subtitle_grid_model.{h,cpp}  # QAbstractListModel + activeRow + 行操作（插/复制/删）
-    ├── edit_box_vm.{h,cpp}          # 选中行 text/startTime/endTime 双向编辑（走 Commit 总线）
+    ├── edit_box_vm.{h,cpp}          # 选中行全字段双向编辑（文本/时间/时长/元数据）+ Enter 键盘流
     ├── undo_manager.{h,cpp}         # 快照式 Undo/Redo 栈 + 合并提交 + isModified
     └── document_vm.{h,cpp}          # 文件路径/脏标记/错误 + 打开保存（AssParser/AssSubtitleFormat）
 ```
@@ -73,7 +74,9 @@ aegisub_core ──► libaegisub（agi::Path / agi::Options / agi::Time / agi::
 - **快捷键**：`Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` 由 `main.cpp` 里的应用级事件过滤器接管（`UndoShortcutFilter`）：先吃掉 `ShortcutOverride`（否则 `QQuickTextInput` 会用自己的撤销栈把键抢走、QML `Action.shortcut` 也拿不到），再处理 `KeyPress`。菜单 `Edit` 里另有 `Undo <desc>` / `Redo <desc>` 动态项（`enabled` 绑 `canUndo`/`canRedo`）。
 - **未保存保护**：`Main.qml` 的 `requestAction("new"/"open"/"quit")` 在 `documentVM.dirty` 时弹 Material 3 `Dialog`（`Save` / `Discard` / `Cancel`）；窗口 `onClosing` 也走同一入口（`forceClose` 标记让 `Discard` 之后能真正关闭）。`Save` 在未命名时转 `Save As`，保存成功后继续原动作。
 - **行操作（Stage 8A）**：`SubtitleGridModel::insertBefore` / `insertAfter` / `duplicateRow` / `deleteRow` 直接改 `AssFile::Events`（`new AssDialogue` / `new AssDialogue(*src)` 深拷贝、`iterator_to` + `insert`、`erase` + `delete`），随后 `Commit(COMMIT_DIAG_ADDREM)`。`Commit` 统一重排 `Row`，网格的 `onFileCommitted` 走 `refreshPreservingActiveRow()` 修索引，最后由操作自己 `setActiveRow` 定位到新行 / 邻行。时间规则对齐 wx 版：插前 = `End` 接当前行 `Start`、最多 `Timing/Default Duration` 且不压前一行；插后 = `Start` 接当前行 `End`、不越过下一行；删最后一行时补一条空默认行（同 `edit/line/delete`）。
-- **焦点隔离快捷键**：`Delete` / `Insert` / `Ctrl+D` 用 QML `Shortcut` 实现，`enabled` 绑 `!textInputFocused()`；`EditBox.qml` 的 `TextArea`/`TextField` 带 `isEditBoxField: true` 标记，`Main.qml` 用 `activeFocusItem.isEditBoxField` 判断，避免抢文本框自己的 Delete/插入键操作。网格行的右键上下文菜单在 `SubtitleGrid.qml`（右键先选行再 `popup`，菜单项直接作用于 `gridModel.activeRow`）。
+- **焦点隔离快捷键**：`Delete` / `Insert` / `Ctrl+D` 用 QML `Shortcut` 实现，`enabled` 绑 `!textInputFocused()`；`EditBox.qml` 的 `TextArea`/`TextField`/`SpinBox`/`ComboBox`/`CheckBox` 带 `isEditBoxField: true` 标记，`Main.qml` 的 `textInputFocused()` 从 `activeFocusItem` **沿 parent 链**找该标记（SpinBox 聚焦时焦点在它内部的 TextInput 上），避免抢文本框自己的 Delete/插入键操作。网格行的右键上下文菜单在 `SubtitleGrid.qml`（右键先选行再 `popup`，菜单项直接作用于 `gridModel.activeRow`）。
+- **EditBox 字段与键盘流（Stage 8B）**：`EditBoxViewModel` 现在覆盖 `Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`，全部走 `commitEdit()`（`COMMIT_DIAG_META` / `COMMIT_DIAG_TIME`）；因为元数据字段共用 `COMMIT_DIAG_META`，合并提交额外用 `field_key` 分组，避免 1 秒内改两个字段被并成一步。`Duration` 是派生值（`End - Start`，钳到非负），改它只写 `End`，改 `Start`/`End` 会发 `durationChanged()` 让 QML 刷新派生字段。`availableStyles` 在 `modelReset` / `COMMIT_STYLES` / `restored` 时重建（空表回退 `Default`）。`Enter` = 提交并跳下一行（末行自动 `insertAfter` 建行），`Shift+Enter` = 光标处插入字面 `\N`；这两个键由 `main.cpp` 的 `BodyEnterFilter` 转发（原因见坑 20）。
+- **QML 字段回填策略**：EditBox 的输入框**不做属性绑定**，由 `loadSelection()` 显式回填；时间三件套在 `startTimeChanged`/`endTimeChanged`/`durationChanged` 时用 `syncTimeFields()` 只更新**没有焦点**的字段，避免把正在输入的文本按规范化格式覆盖掉（会跳光标）。
 - **菜单/文件对话框**：`Main.qml` 的 `menuBar` 提供 File（New/Open/Save/Save As/Exit）、Subtitle（Properties）、Tools（Preferences）、Help（About），`QtQuick.Dialogs` 的 `FileDialog` 负责 Open / Save As。
 - **命令行**：`aegisub-qt.exe [file.ass]`，参数存在且是文件则启动即打开，否则 `newDocument()`。
 
@@ -137,12 +140,16 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 17. **局部变量别叫 `restored`**：`UndoManager` 的信号就叫 `restored()`，在 `restoreTo()` 里用 `AssFile restored(...)` 会遮蔽信号名，`emit restored();` 直接编译失败（C2064）。同理信号名与成员变量不要撞。
 18. **`wxString::utf8_string()` 在这个 wx 版本没有**：用 `wxString::ToStdString(wxConvUTF8)` 转 UTF-8（`commit_bridge.cpp`）。
 19. **`agi::signal` 的槽按「连接顺序的逆序」执行**（`Signal::operator()` 从最后一个槽往前遍历），和 Qt 信号的正序不同。`SubtitleGridModel` 先构造先连接，所以在 `AnnounceCommit` 里**最后**收到通知：行增删提交时 `EditBoxViewModel` 的槽先跑，而网格 `rows_` 还指着刚 `delete` 掉的 `AssDialogue`，此时读 `getActiveDialogue()` 就是 use-after-free。因此 `EditBoxViewModel::onFileCommitted` 对 `COMMIT_DIAG_ADDREM` / `COMMIT_ORDER` / `COMMIT_NEW` 直接返回，交给网格 `modelReset` 刷新；`onRestored()` 的刷新用 `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` 延后一个事件循环。
+20. **`TextArea` 会自己吞掉 `Return`**：`QQuickTextEdit` 在 `keyPressEvent` 里处理 Return 并 accept，QML 的 `Keys.onReturnPressed` / `Keys.onPressed` 根本收不到（这也是 Stage 7 里 `TextArea` 没有 `textEdited` 的同一类问题）。所以 EditBox 的 Enter 流是在 `main.cpp` 里用应用级事件过滤器（`BodyEnterFilter`）接的：它只在焦点对象的 `objectName == "editBoxTextArea"` 时拦截 Return/Shift+Return，再调 `EditBoxViewModel::handleEnterKey()`。`Shift+Enter` 的插入动作交给 QML（`lineBreakRequested` 信号），因为 TextArea 由 QML 拥有。
+21. **输入框不要做双向绑定**：`TextField.text` 一旦被用户编辑，QML 绑定就会被破坏；而「绑定 + 每次 commit 回写」会在用户输入中途把文本按解析后的规范格式覆盖（光标跳到末尾）。做法是 `loadSelection()` 显式回填 + 值相等就跳过，跨字段联动（Start/End/Duration）只更新**没有焦点**的那个字段。注意两个方向要分开：**外部变更**（undo/redo、切换行）必须**强制**回填所有字段，哪怕光标就在那个框里，否则撤销后框里还显示旧值；只有**自身编辑**引起的联动刷新才跳过有焦点的字段。
+22. **SpinBox 的键盘焦点在它内部的 TextInput 上**：可编辑 `SpinBox` 聚焦时 `Window.activeFocusItem` 是它的 contentItem（`TextInput`），不是 `SpinBox` 本身，所以焦点隔离判断不能只看当前 item 的标记属性，要沿 `parent` 链向上找 `isEditBoxField`，否则在 Layer 框里按 `Insert` 会漏到网格行快捷键上。
 
 ## 6. 已知限制（下一步工作）
 
 - **Save As 的原生对话框自动化未覆盖**：Windows 下 `FileDialog` 用系统对话框，自动化只验证了对话框弹出；保存逻辑本身（与 `saveFileAs` 共用 `saveToPath`）已通过 Ctrl+S 保存验证。
 - **Edit 菜单不显示快捷键文本**：Qt Quick Controls 的 `MenuItem` 不渲染 `Action.shortcut` 的文本（Qt Widgets 的 QMenu 才会），所以菜单里只有 `Undo` / `Redo <desc>`，看不到 `Ctrl+Z`/`Ctrl+Y` 提示；快捷键本身由 `main.cpp` 的事件过滤器实现并已验证（要提示得给两个菜单项写自定义 `contentItem`）。
 - **撤销粒度**：快照式 undo 每次提交都深拷贝整个 `AssFile`（1000ms 合并窗口内只保留一份），大文件 + 高频输入时内存/CPU 有开销；栈上限 100 步，保存点被挤出后文档会一直显示「已修改」。
+- **EditBox 仍缺的字段/交互**：没有 `MarginL/MarginR/MarginV` 三个边距、没有时间微调按钮（±10ms/±帧）与「按帧编辑」、没有自动定位到视频时间；`availableStyles` 只来自当前文件的 `[V4+ Styles]`（不读样式库）；新增字段的 UI 文案（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`/`chars`）还没进 po，实际显示英文。
 - **网格操作仍是最小集**：已支持插行 / 复制 / 删行（含 Undo/Redo），但排序、多选、折叠、拖拽都未实现；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 仍是全量 `beginResetModel`，行数很多时每次增删都要整体重绘。
 - **大文件性能**：`ListView` 已复用 delegate，但尚无分页/滚动加载。
 - **没有最近文件列表 / 另存时的编码选择器**（当前保存固定 UTF-8，打开时自动检测）。
@@ -178,3 +185,11 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
     - 焦点隔离：焦点在 EditBox 文本框时 `Delete`/`Insert` 只作用于文本（不删行/不插行）；点网格行后焦点转到网格，`Delete`/`Insert`/`Ctrl+D` 直接作用于行；
     - 混合操作（插行 + 复制 + 删行）后 `Ctrl+S` → 关闭重开，逐行 Text/Start/End/Style/Actor 与保存前一致；
     - Stage 7 回归不受影响（文本编辑、Ctrl+Z、未保存确认框）；`app_stderr.log` 无 QML 警告/报错。
+  - Stage 8B（EditBox 字段与键盘流，脚本/截图在 `.build-tools/stage8b/`，不入库；用副本 `test_meta.ass`）：
+    - `Comment` 勾选 → 网格该行灰显（文本列亮度 p95 161→104）且标题带 `*`，Ctrl+Z 精确恢复颜色与标题；
+    - `Style` 下拉（`Default`/`Title`）切换 → 网格 Style 列实时更新；`Layer`/`Actor`/`Effect` 修改 → 网格对应列更新，逐步 Ctrl+Z 可回退；
+    - `Duration` 与 `Start`/`End` 双向联动（改 Duration → End 与网格同步；改 Start → Duration 实时），撤销后三个时间框**立即**回填（即使光标还在框里）；
+    - `Enter` = 提交并跳下一行、末行自动新建（5→6 行）且焦点留在正文可继续输入；`Shift+Enter` = 插入字面 `\N`（保存后磁盘 ASS 确认）；
+    - 焦点隔离覆盖 `SpinBox`/`ComboBox`/`CheckBox`：Layer 框内按 `Insert`/`Delete` 不再增删行，点网格行后快捷键照常可用；
+    - 布局：1000x700 客户区下元数据行 / 时间行 / 正文区全部完整可见（EditBox 约 176px 实际高度，无裁剪、无浮动占位符溢出）；
+    - 回归：行操作、文本撤销、未保存确认框、元数据保存重开均无损。

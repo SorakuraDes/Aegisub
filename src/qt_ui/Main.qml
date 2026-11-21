@@ -108,11 +108,17 @@ ApplicationWindow {
             performAction(pendingAction)
     }
 
-    // Keyboard focus inside the EditBox fields: Delete/Insert/Ctrl+D belong to
+    // Keyboard focus inside the EditBox fields (or one of their internal
+    // editors, e.g. the SpinBox's TextInput): Delete/Insert/Ctrl+D belong to
     // the text editors there, not to the row actions.
     function textInputFocused() {
         var item = mainWindow.activeFocusItem
-        return item !== null && item !== undefined && item.isEditBoxField === true
+        while (item !== null && item !== undefined) {
+            if (item.isEditBoxField === true)
+                return true
+            item = item.parent
+        }
+        return false
     }
 
     onClosing: function(close) {
