@@ -1,9 +1,14 @@
 // Must come before any Qt header: agi::signal (via ass_file.h) has members
 // named `slots`, and Qt defines `signals`/`slots` as macros.
 #include "../../ass_file.h"
+// Also agi-only (libaegisub/option_value.h has no include guard, so it must not
+// end up included twice through different orders).
+#include "../../options.h"
 
 #include "subtitle_grid_model.h"
 #include "undo_manager.h"
+
+#include "../commit_bridge.h"
 
 #include "../../ass_dialogue.h"
 
@@ -12,6 +17,27 @@
 #include <QString>
 
 #include <algorithm>
+#include <string>
+
+namespace {
+
+constexpr int kFallbackDefaultDurationMs = 3000;
+
+/// The wx frontend's "Timing/Default Duration" option (new lines are given that
+/// much time), with a fallback for the case where the option store is not up.
+int defaultDurationMs() {
+    if (!config::opt)
+        return kFallbackDefaultDurationMs;
+    const int duration = OPT_GET("Timing/Default Duration")->GetInt();
+    return duration > 0 ? duration : kFallbackDefaultDurationMs;
+}
+
+std::string toUtf8StdString(const QString &s) {
+    const QByteArray utf8 = s.toUtf8();
+    return std::string(utf8.constData(), size_t(utf8.size()));
+}
+
+} // namespace
 
 SubtitleGridModel::SubtitleGridModel(AssFile *file, UndoManager *undoManager, QObject *parent)
 : QAbstractListModel(parent)
@@ -193,4 +219,132 @@ QHash<int, QByteArray> SubtitleGridModel::roleNames() const {
         { TextRole, "text" },
         { CommentRole, "isComment" },
     };
+}
+
+// ---------------------------------------------------------------------------
+// Row operations
+// ---------------------------------------------------------------------------
+
+void SubtitleGridModel::commitRowChange(const QString &description, AssDialogue *line) {
+    if (!file_)
+        return;
+    // A fresh amend id (-1) for every operation: each insert/delete is its own
+    // undo step, unlike the coalesced text edits of EditBoxViewModel.
+    aegisub_qt::commit(file_, toUtf8StdString(description), AssFile::COMMIT_DIAG_ADDREM, -1, line);
+}
+
+int SubtitleGridModel::selectLine(AssDialogue *line) {
+    const int index = indexOf(line);
+    if (index >= 0)
+        setActiveRow(index);
+    return index;
+}
+
+int SubtitleGridModel::appendDefaultLine() {
+    if (!file_)
+        return -1;
+    auto *line = new AssDialogue;
+    line->End = defaultDurationMs();
+    file_->Events.push_back(*line);
+    commitRowChange(QStringLiteral("Insert line"), line);
+    return selectLine(line);
+}
+
+int SubtitleGridModel::insertBefore(int row) {
+    if (!file_)
+        return -1;
+    if (rows_.empty())
+        return appendDefaultLine();
+
+    row = std::clamp(row, 0, int(rows_.size()) - 1);
+    AssDialogue *current = rows_[size_t(row)];
+
+    auto *line = new AssDialogue;
+    line->Style = current->Style;
+    // Same rule as subtitle/insert/before: end where the current line starts
+    // and give it up to the default duration, but never overlap the previous
+    // line and never go negative.
+    line->End = current->Start;
+    agi::Time start = line->End - defaultDurationMs();
+    for (auto const &other : file_->Events) {
+        if (other.End <= line->End)
+            start = std::max<agi::Time>(start, other.End);
+    }
+    line->Start = std::max<agi::Time>(start, agi::Time(0));
+
+    auto pos = file_->Events.iterator_to(*current);
+    file_->Events.insert(pos, *line);
+
+    commitRowChange(QStringLiteral("Insert line before"), line);
+    return selectLine(line);
+}
+
+int SubtitleGridModel::insertAfter(int row) {
+    if (!file_)
+        return -1;
+    if (rows_.empty())
+        return appendDefaultLine();
+
+    row = std::clamp(row, 0, int(rows_.size()) - 1);
+    AssDialogue *current = rows_[size_t(row)];
+
+    auto *line = new AssDialogue;
+    line->Style = current->Style;
+    // Same rule as subtitle/insert/after: start where the current line ends,
+    // limit the duration so it does not run into the next line.
+    line->Start = current->End;
+    agi::Time end = line->Start + defaultDurationMs();
+    for (auto const &other : file_->Events) {
+        if (other.Start >= line->Start)
+            end = std::min<agi::Time>(end, other.Start);
+    }
+    line->End = std::max<agi::Time>(end, line->Start);
+
+    auto pos = file_->Events.iterator_to(*current);
+    file_->Events.insert(++pos, *line);
+
+    commitRowChange(QStringLiteral("Insert line after"), line);
+    return selectLine(line);
+}
+
+int SubtitleGridModel::duplicateRow(int row) {
+    if (!file_ || row < 0 || row >= int(rows_.size()))
+        return -1;
+
+    AssDialogue *source = rows_[size_t(row)];
+    // Same as edit/line/duplicate: a plain deep copy inserted right after.
+    auto *copy = new AssDialogue(*source);
+
+    auto pos = file_->Events.iterator_to(*source);
+    file_->Events.insert(++pos, *copy);
+
+    commitRowChange(QStringLiteral("Duplicate line"), copy);
+    return selectLine(copy);
+}
+
+void SubtitleGridModel::deleteRow(int row) {
+    if (!file_ || rows_.empty())
+        return;
+
+    row = std::clamp(row, 0, int(rows_.size()) - 1);
+    AssDialogue *target = rows_[size_t(row)];
+
+    // Unlink first, then free: the intrusive list does not own the line.
+    // Anything that still points at it is fixed up by the model reset that the
+    // Commit below triggers.
+    file_->Events.erase(file_->Events.iterator_to(*target));
+    delete target;
+
+    // edit/line/delete in the wx frontend always leaves at least one line.
+    if (file_->Events.empty()) {
+        auto *replacement = new AssDialogue;
+        replacement->End = defaultDurationMs();
+        file_->Events.push_back(*replacement);
+    }
+
+    commitRowChange(QStringLiteral("Delete line"));
+
+    // Commit rebuilt rows_; land on the line which took the deleted one's place,
+    // or on the previous line when the last row went away.
+    setActiveRow(rows_.empty() ? -1 : std::min(row, int(rows_.size()) - 1));
 }

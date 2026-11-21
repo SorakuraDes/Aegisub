@@ -108,11 +108,35 @@ ApplicationWindow {
             performAction(pendingAction)
     }
 
+    // Keyboard focus inside the EditBox fields: Delete/Insert/Ctrl+D belong to
+    // the text editors there, not to the row actions.
+    function textInputFocused() {
+        var item = mainWindow.activeFocusItem
+        return item !== null && item !== undefined && item.isEditBoxField === true
+    }
+
     onClosing: function(close) {
         if (!forceClose && documentVM.dirty) {
             close.accepted = false
             requestAction("quit")
         }
+    }
+
+    // Row actions from the keyboard, kept away from the text editors above.
+    Shortcut {
+        sequence: "Delete"
+        enabled: !mainWindow.textInputFocused() && gridModel.activeRow >= 0
+        onActivated: gridModel.deleteRow(gridModel.activeRow)
+    }
+    Shortcut {
+        sequence: "Insert"
+        enabled: !mainWindow.textInputFocused()
+        onActivated: gridModel.insertAfter(gridModel.activeRow)
+    }
+    Shortcut {
+        sequence: "Ctrl+D"
+        enabled: !mainWindow.textInputFocused() && gridModel.activeRow >= 0
+        onActivated: gridModel.duplicateRow(gridModel.activeRow)
     }
 
     menuBar: MenuBar {
@@ -170,6 +194,26 @@ ApplicationWindow {
 
         Menu {
             title: "&Subtitle"
+            Action {
+                text: "Insert &Before"
+                onTriggered: gridModel.insertBefore(gridModel.activeRow)
+            }
+            Action {
+                text: "Insert &After"
+                onTriggered: gridModel.insertAfter(gridModel.activeRow)
+            }
+            MenuSeparator {}
+            Action {
+                text: "D&uplicate"
+                enabled: gridModel.activeRow >= 0
+                onTriggered: gridModel.duplicateRow(gridModel.activeRow)
+            }
+            Action {
+                text: "De&lete"
+                enabled: gridModel.activeRow >= 0
+                onTriggered: gridModel.deleteRow(gridModel.activeRow)
+            }
+            MenuSeparator {}
             Action {
                 text: "&Properties..."
                 onTriggered: mainWindow.openWindow("properties")

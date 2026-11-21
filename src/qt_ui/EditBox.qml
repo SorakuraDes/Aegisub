@@ -39,6 +39,8 @@ Rectangle {
                 font.family: "Consolas"
                 font.pixelSize: 13
                 enabled: gridModel.activeRow >= 0
+                // Lets Main.qml keep Delete/Insert/Ctrl+D away from text editing.
+                property bool isEditBoxField: true
                 onTextEdited: editBoxVM.startTime = text
             }
 
@@ -59,6 +61,8 @@ Rectangle {
                 font.family: "Consolas"
                 font.pixelSize: 13
                 enabled: gridModel.activeRow >= 0
+                // Lets Main.qml keep Delete/Insert/Ctrl+D away from text editing.
+                property bool isEditBoxField: true
                 onTextEdited: editBoxVM.endTime = text
             }
 
@@ -101,6 +105,8 @@ Rectangle {
                 font.pixelSize: 14
                 wrapMode: TextArea.Wrap
                 enabled: gridModel.activeRow >= 0
+                // Lets Main.qml keep Delete/Insert/Ctrl+D away from text editing.
+                property bool isEditBoxField: true
                 placeholderText: i18n.t("No line selected")
                 onTextChanged: if (editBoxVM.text !== text) editBoxVM.text = text
                 background: null

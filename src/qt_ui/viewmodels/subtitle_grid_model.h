@@ -60,6 +60,24 @@ public:
     /// AssDialogue behind it).
     Q_INVOKABLE void notifyRowUpdated(int row);
 
+    // ---- Row operations (Stage 8) -----------------------------------------
+    // Every one of these edits AssFile::Events, then goes through
+    // AssFile::Commit(COMMIT_DIAG_ADDREM) so the UndoManager records it, and
+    // finally selects the row the operation produced.
+
+    /// Insert a new line before `row` (appends a default line when the file has
+    /// no lines at all). Times are derived from the current line the same way
+    /// subtitle/insert/before does it in the wx frontend.
+    /// @return index of the new row, or -1 on failure
+    Q_INVOKABLE int insertBefore(int row);
+    /// Insert a new line after `row`, times derived like subtitle/insert/after.
+    Q_INVOKABLE int insertAfter(int row);
+    /// Deep-copy line `row` and insert the copy directly after it.
+    Q_INVOKABLE int duplicateRow(int row);
+    /// Delete line `row`; when the last line is deleted a fresh empty line is
+    /// added (the wx frontend never leaves a file without a dialogue line).
+    Q_INVOKABLE void deleteRow(int row);
+
 signals:
     void activeRowChanged();
 
@@ -68,6 +86,13 @@ private:
     int indexOf(const AssDialogue *line) const;
     /// Rebuild the row index but keep the selected row (clamped on shrink).
     void refreshPreservingActiveRow();
+
+    /// Append a default line to an empty file and select it.
+    int appendDefaultLine();
+    /// Commit a line-list change and leave the UndoManager to snapshot it.
+    void commitRowChange(const QString &description, AssDialogue *line = nullptr);
+    /// Select `line` and return its row index (-1 if it is not in the file).
+    int selectLine(AssDialogue *line);
 
     /// AssFile::AnnounceCommit slot: a commit changed the file.
     void onFileCommitted(int type, const AssDialogue *single_line);

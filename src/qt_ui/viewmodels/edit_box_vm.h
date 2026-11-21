@@ -58,6 +58,8 @@ private:
     void onFileCommitted(int type, const AssDialogue *single_line);
     /// UndoManager::restored slot: a snapshot was swapped into the file.
     void onRestored();
+    /// Deferred part of onRestored(): runs after the grid rebuilt its rows.
+    void refreshAfterExternalChange();
 
     SubtitleGridModel *model_;
     AssFile *file_;

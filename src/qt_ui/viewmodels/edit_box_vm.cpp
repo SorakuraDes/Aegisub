@@ -92,12 +92,19 @@ void EditBoxViewModel::onFileCommitted(int type, const AssDialogue *) {
     if (in_self_commit_)
         return;
 
+    // Structural changes (line inserted/deleted/reordered) invalidate the grid
+    // model's row index. The grid rebuilds it in its own AnnounceCommit slot,
+    // but agi::signal invokes slots in reverse connection order, so this slot
+    // can run first -- reading the active line here would dereference a line
+    // that deleteRow() already freed. The model reset the grid emits right
+    // afterwards is what refreshes the editor instead.
+    if (type == AssFile::COMMIT_NEW
+        || (type & (AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_ORDER)) != 0)
+        return;
+
     // Only commits that can change the active line's content matter here;
     // script-info/style edits must not reset the field the user is typing in.
-    const bool line_related =
-        type == AssFile::COMMIT_NEW
-        || (type & (AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL)) != 0;
-    if (!line_related)
+    if ((type & AssFile::COMMIT_DIAG_FULL) == 0)
         return;
 
     resetCoalescing();
@@ -105,10 +112,18 @@ void EditBoxViewModel::onFileCommitted(int type, const AssDialogue *) {
     emit externalReload();
 }
 
-void EditBoxViewModel::onRestored() {
-    resetCoalescing();
+void EditBoxViewModel::refreshAfterExternalChange() {
     reload();
     emit externalReload();
+}
+
+void EditBoxViewModel::onRestored() {
+    resetCoalescing();
+    // The grid model rebuilds rows_ inside its own restored handler. Defer the
+    // reload by one event loop iteration so it can never read a dangling line,
+    // regardless of which order Qt happens to invoke the slots in.
+    QMetaObject::invokeMethod(this, &EditBoxViewModel::refreshAfterExternalChange,
+                              Qt::QueuedConnection);
 }
 
 void EditBoxViewModel::commitEdit(const QString &description, int type, AssDialogue *line) {

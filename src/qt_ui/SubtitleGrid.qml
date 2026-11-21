@@ -16,6 +16,33 @@ Rectangle {
     readonly property int colEffect: 90
     readonly property string monoFont: "Consolas"
 
+    // Row context menu. Declared here (not in the delegate) so a single menu
+    // instance is reused; the row is selected before it opens, so the items can
+    // simply act on gridModel.activeRow.
+    Menu {
+        id: rowMenu
+
+        MenuItem {
+            text: i18n.t("Insert Before")
+            onClicked: gridModel.insertBefore(gridModel.activeRow)
+        }
+        MenuItem {
+            text: i18n.t("Insert After")
+            onClicked: gridModel.insertAfter(gridModel.activeRow)
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: i18n.t("Duplicate")
+            enabled: gridModel.activeRow >= 0
+            onClicked: gridModel.duplicateRow(gridModel.activeRow)
+        }
+        MenuItem {
+            text: i18n.t("Delete")
+            enabled: gridModel.activeRow >= 0
+            onClicked: gridModel.deleteRow(gridModel.activeRow)
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 8
@@ -113,7 +140,19 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
-                    onClicked: gridModel.activeRow = index
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function(mouse) {
+                        // Both buttons select the row first; the right one then
+                        // opens the row actions at the cursor. Clicking the grid
+                        // also takes keyboard focus away from the EditBox fields
+                        // so that Delete/Insert/Ctrl+D act on rows, not text.
+                        gridModel.activeRow = index
+                        listView.forceActiveFocus()
+                        if (mouse.button === Qt.RightButton) {
+                            var pos = rowDelegate.mapToItem(grid, mouse.x, mouse.y)
+                            rowMenu.popup(pos.x, pos.y)
+                        }
+                    }
                 }
 
                 RowLayout {
