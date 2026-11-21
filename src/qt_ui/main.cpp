@@ -11,13 +11,76 @@
 #include "viewmodels/properties_vm.h"
 #include "viewmodels/subtitle_grid_model.h"
 #include "viewmodels/translation_service.h"
+#include "viewmodels/undo_manager.h"
 
 #include <QCoreApplication>
+#include <QDebug>
+#include <QEvent>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
-#include <QDebug>
+
+namespace {
+
+/// Routes Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z to the UndoManager.
+///
+/// A QML Action.shortcut is not enough here: QQuickTextInput implements its own
+/// undo/redo and accepts the ShortcutOverride event for those keys, which
+/// silently swallows the menu shortcut whenever an edit field has focus. An
+/// application-wide filter sees the ShortcutOverride first, accepts it (so no
+/// shortcut fires at all) and then handles the KeyPress itself, which gives
+/// exactly one undo per key press regardless of the focus.
+class UndoShortcutFilter final : public QObject {
+public:
+    explicit UndoShortcutFilter(UndoManager *undo, QObject *parent = nullptr)
+    : QObject(parent)
+    , undo_(undo)
+    {
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        Q_UNUSED(watched);
+
+        const QEvent::Type type = event->type();
+        if (type != QEvent::ShortcutOverride && type != QEvent::KeyPress)
+            return false;
+
+        auto *key_event = static_cast<QKeyEvent *>(event);
+        const Qt::KeyboardModifiers mods = key_event->modifiers();
+        if (mods != Qt::ControlModifier && mods != (Qt::ControlModifier | Qt::ShiftModifier))
+            return false;
+
+        const bool shift = mods.testFlag(Qt::ShiftModifier);
+        const int key = key_event->key();
+        const bool is_undo = key == Qt::Key_Z && !shift;
+        const bool is_redo = (key == Qt::Key_Y && !shift) || (key == Qt::Key_Z && shift);
+        if (!is_undo && !is_redo)
+            return false;
+
+        if (type == QEvent::ShortcutOverride) {
+            event->accept();
+            return true;
+        }
+
+        // Auto-repeat would blow through the whole undo stack in a flash.
+        if (!key_event->isAutoRepeat()) {
+            if (is_undo)
+                undo_->undo();
+            else
+                undo_->redo();
+        }
+        event->accept();
+        return true;
+    }
+
+private:
+    UndoManager *undo_;
+};
+
+} // namespace
 
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
@@ -34,21 +97,23 @@ int main(int argc, char *argv[]) {
     // either the default new-file content or a file passed on the command line.
     AssFile script;
 
+    // The undo stack must exist before the view models: it owns the clean
+    // baseline that DocumentViewModel::dirty is derived from.
+    UndoManager undoManager(&script);
+
     TranslationService i18n;
     AppInfoViewModel appInfoVM;
     AboutViewModel aboutVM(&i18n);
     PreferencesViewModel preferencesVM;
-    PropertiesViewModel propertiesVM(&script, &i18n);
-    SubtitleGridModel gridModel(&script);
-    EditBoxViewModel editBoxVM(&gridModel);
-    DocumentViewModel documentVM(&script, &gridModel);
+    PropertiesViewModel propertiesVM(&script, &i18n, &undoManager);
+    // The grid model is constructed before the edit box so that it rebuilds its
+    // row index first when UndoManager::restored fires (see undo_manager.h).
+    SubtitleGridModel gridModel(&script, &undoManager);
+    EditBoxViewModel editBoxVM(&gridModel, &script, &undoManager);
+    DocumentViewModel documentVM(&script, &gridModel, &undoManager);
 
-    // Editing either the grid's edit box or the script properties must mark
-    // the document as dirty (the title bar then shows " *").
-    QObject::connect(&editBoxVM, &EditBoxViewModel::edited,
-                     &documentVM, &DocumentViewModel::markDirty);
-    QObject::connect(&propertiesVM, &PropertiesViewModel::edited,
-                     &documentVM, &DocumentViewModel::markDirty);
+    UndoShortcutFilter undoFilter(&undoManager);
+    app.installEventFilter(&undoFilter);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("i18n", &i18n);
@@ -59,6 +124,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("gridModel", &gridModel);
     engine.rootContext()->setContextProperty("editBoxVM", &editBoxVM);
     engine.rootContext()->setContextProperty("documentVM", &documentVM);
+    engine.rootContext()->setContextProperty("undoVM", &undoManager);
 
     // Optional first command line argument: a subtitle file to open.
     const QStringList args = QCoreApplication::arguments();

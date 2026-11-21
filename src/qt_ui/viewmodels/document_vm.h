@@ -6,9 +6,14 @@
 
 class AssFile;
 class SubtitleGridModel;
+class UndoManager;
 
 /// Owns the open document: current file path, dirty state, and the actual
 /// AssFile I/O through the original AssSubtitleFormat reader/writer.
+///
+/// The dirty flag is not tracked here any more: it is simply
+/// UndoManager::isModified (current undo position != position at last save), so
+/// undoing back to the saved state clears it automatically.
 class DocumentViewModel final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
@@ -17,7 +22,8 @@ class DocumentViewModel final : public QObject {
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 
 public:
-    DocumentViewModel(AssFile *file, SubtitleGridModel *gridModel, QObject *parent = nullptr);
+    DocumentViewModel(AssFile *file, SubtitleGridModel *gridModel, UndoManager *undoManager,
+                      QObject *parent = nullptr);
 
     QString filePath() const;
     QString displayName() const;
@@ -30,7 +36,6 @@ public:
     Q_INVOKABLE bool saveFile();
     Q_INVOKABLE bool saveFileAs(const QUrl &url);
     Q_INVOKABLE bool saveLocalPath(const QString &path);
-    Q_INVOKABLE void markDirty();
     Q_INVOKABLE void clearError();
 
 signals:
@@ -43,13 +48,12 @@ private:
     bool loadFromPath(const QString &path);
     bool saveToPath(const QString &path);
     void setFilePath(const QString &path);
-    void setDirty(bool dirty);
     void setError(const QString &message);
     void clearErrorIfNeeded();
 
     AssFile *file_;
     SubtitleGridModel *gridModel_;
+    UndoManager *undoManager_;
     QString file_path_;
     QString last_error_;
-    bool dirty_ = false;
 };

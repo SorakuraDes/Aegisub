@@ -117,5 +117,12 @@ Rectangle {
         function onModelReset() { loadSelection() }
     }
 
+    // Undo/redo (and any commit made by another editor) replaces the active
+    // line's contents, so the fields have to be refilled explicitly.
+    Connections {
+        target: editBoxVM
+        function onExternalReload() { loadSelection() }
+    }
+
     Component.onCompleted: loadSelection()
 }

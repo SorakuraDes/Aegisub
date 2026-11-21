@@ -6,6 +6,7 @@
 
 #include "document_vm.h"
 #include "subtitle_grid_model.h"
+#include "undo_manager.h"
 
 #include "../subtitle_format_ass.h"
 
@@ -31,11 +32,19 @@ agi::fs::path toPath(const QString &path) {
 
 } // namespace
 
-DocumentViewModel::DocumentViewModel(AssFile *file, SubtitleGridModel *gridModel, QObject *parent)
+DocumentViewModel::DocumentViewModel(AssFile *file, SubtitleGridModel *gridModel,
+                                     UndoManager *undoManager, QObject *parent)
 : QObject(parent)
 , file_(file)
 , gridModel_(gridModel)
+, undoManager_(undoManager)
 {
+    if (undoManager_) {
+        // dirty is defined as "the undo position differs from the saved one",
+        // so undo/redo update the title bar without any extra bookkeeping.
+        connect(undoManager_, &UndoManager::isModifiedChanged,
+                this, &DocumentViewModel::dirtyChanged);
+    }
 }
 
 QString DocumentViewModel::filePath() const {
@@ -49,7 +58,7 @@ QString DocumentViewModel::displayName() const {
 }
 
 bool DocumentViewModel::dirty() const {
-    return dirty_;
+    return undoManager_ ? undoManager_->isModified() : false;
 }
 
 QString DocumentViewModel::lastError() const {
@@ -62,13 +71,6 @@ void DocumentViewModel::setFilePath(const QString &path) {
     file_path_ = path;
     emit filePathChanged();
     emit displayNameChanged();
-}
-
-void DocumentViewModel::setDirty(bool dirty) {
-    if (dirty_ == dirty)
-        return;
-    dirty_ = dirty;
-    emit dirtyChanged();
 }
 
 void DocumentViewModel::setError(const QString &message) {
@@ -84,10 +86,6 @@ void DocumentViewModel::clearErrorIfNeeded() {
     emit lastErrorChanged();
 }
 
-void DocumentViewModel::markDirty() {
-    setDirty(true);
-}
-
 void DocumentViewModel::clearError() {
     clearErrorIfNeeded();
 }
@@ -100,10 +98,13 @@ bool DocumentViewModel::newDocument() {
         tmp.LoadDefault();
         file_->swap(tmp);
         setFilePath(QString());
-        setDirty(false);
         clearErrorIfNeeded();
         if (gridModel_)
             gridModel_->refresh();
+        // A brand new document is clean: the current contents are the baseline
+        // every future undo returns to.
+        if (undoManager_)
+            undoManager_->resetToClean();
         return true;
     } catch (agi::Exception const &e) {
         setError(QString::fromStdString(e.GetMessage()));
@@ -140,10 +141,12 @@ bool DocumentViewModel::loadFromPath(const QString &path) {
 
         file_->swap(tmp);
         setFilePath(path);
-        setDirty(false);
         clearErrorIfNeeded();
         if (gridModel_)
             gridModel_->refresh();
+        // The freshly loaded contents are the clean baseline: undo stops here.
+        if (undoManager_)
+            undoManager_->resetToClean();
         qInfo() << "[document] loaded" << path << "encoding" << QString::fromStdString(encoding)
                 << "lines" << int(file_->Events.size());
         return true;
@@ -175,7 +178,10 @@ bool DocumentViewModel::saveToPath(const QString &path) {
         AssSubtitleFormat format;
         format.WriteFile(file_, toPath(path), agi::vfr::Framerate(), "UTF-8");
         setFilePath(path);
-        setDirty(false);
+        // The undo position at save time becomes the "clean" reference, so the
+        // title bar drops the '*' and undoing back here clears it again.
+        if (undoManager_)
+            undoManager_->markSaved();
         clearErrorIfNeeded();
         qInfo() << "[document] saved" << path;
         return true;

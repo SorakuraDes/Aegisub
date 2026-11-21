@@ -14,7 +14,8 @@
 | 3 | `b6095b638` | 桥接 `AssFile`：`PropertiesViewModel` 读写 `[Script Info]`，`dumpAss()` 打印 |
 | 4 | `101661e54` | `SubtitleGridModel`（`QAbstractListModel`，O(1) 索引）+ 只读字幕网格 |
 | 5 | `785db8cbd` | 行选中 `activeRow`、`EditBoxViewModel` 双向编辑、`EditBox.qml`，网格实时刷新；本文件 |
-| 6 | 本次工作区改动（未提交） | 真实 `.ass` 读写（`AssParser` + `AssSubtitleFormat`，方案 B shim）、`DocumentViewModel`、菜单栏 + `FileDialog`、脏标记/标题、`modelReset` 同步 |
+| 6 | `0c6882011` | 真实 `.ass` 读写（`AssParser` + `AssSubtitleFormat`，方案 B shim）、`DocumentViewModel`、菜单栏 + `FileDialog`、脏标记/标题、`modelReset` 同步 |
+| 7 | 本次工作区改动（未提交） | `AssFile::Commit` 统一提交总线 + 轻量 `UndoManager`（快照栈、合并提交、`isModified`）+ 脏标记改由撤销位置推导 + Edit 菜单 / `Ctrl+Z`·`Ctrl+Y` + 未保存确认框；新增 `commit_bridge`（隔离 wxString） |
 
 ## 2. 目录结构
 
@@ -22,6 +23,7 @@
 src/qt_ui/
 ├── main.cpp                  # 入口：初始化 core → 建 AssFile → 建 VM → 可选命令行文件 → 注入 QML
 ├── aegisub_core.{h,cpp}      # libaegisub 子系统初始化（dispatch/log/Path/Options）、FlushOptions
+├── commit_bridge.{h,cpp}     # wx 隔离层：Commit/AddUndoManager 的 std::string 版（.cpp 编进 ass_qt_core）
 ├── subtitle_format_shim.cpp  # 方案 B：补 SubtitleFormat 的 ctor/CanReadFile/CanWriteFile/CanSave
 ├── meson.build               # aegisub-qt 目标；ass_qt_core 静态库（ASS 数据模型 + I/O，需 wx PCH）
 ├── resources.qrc             # 全部 QML 注册到 qrc:/
@@ -38,7 +40,8 @@ src/qt_ui/
     ├── preferences_vm.{h,cpp}       # agi::Options 读写（OPT_GET/OPT_SET）
     ├── properties_vm.{h,cpp}        # AssFile::Get/SetScriptInfo + dumpAss()
     ├── subtitle_grid_model.{h,cpp}  # QAbstractListModel + activeRow + notifyRowUpdated
-    ├── edit_box_vm.{h,cpp}          # 选中行 text/startTime/endTime 双向编辑
+    ├── edit_box_vm.{h,cpp}          # 选中行 text/startTime/endTime 双向编辑（走 Commit 总线）
+    ├── undo_manager.{h,cpp}         # 快照式 Undo/Redo 栈 + 合并提交 + isModified
     └── document_vm.{h,cpp}          # 文件路径/脏标记/错误 + 打开保存（AssParser/AssSubtitleFormat）
 ```
 
@@ -61,7 +64,13 @@ aegisub_core ──► libaegisub（agi::Path / agi::Options / agi::Time / agi::
 - **数据模型**：`AssFile::Events` 是 `boost::intrusive::list`，`SubtitleGridModel` 构造时建 `std::vector<AssDialogue*>` 索引实现 O(1) 行访问；`refresh()` 可重建索引（非空表默认选中第 0 行，空表 -1，并发出 `modelReset`）。
 - **文件 I/O**：`DocumentViewModel` 用原版 `AssParser` 解析、`AssSubtitleFormat::ReadFile/WriteFile` 读写。读取时先解析到临时 `AssFile`，成功才 `swap` 进主文档（坏文件不会破坏当前文档）；编码用 `agi::charset::Detect()` 自动检测（检测为空则回退 UTF-8）。写出统一 UTF-8。
 - **方案 B shim**：`AssSubtitleFormat` 的内联 ctor 需要 `SubtitleFormat(std::string)`，基类 vtable 还需要 `CanReadFile/CanWriteFile/CanSave`；这些都在含 wx 对话框与全部兄弟格式的 `subtitle_format.cpp` 里。`src/qt_ui/subtitle_format_shim.cpp` 只提供这几个 trivial 定义且**不链接** `subtitle_format.cpp`，因此 Qt 前端不引入 wx 对话框/其它字幕格式代码。
-- **脏标记与标题**：`EditBoxViewModel::edited` / `PropertiesViewModel::edited` → `DocumentViewModel::markDirty()`；标题为 `displayName + (dirty ? " *" : "") + " - Aegisub Qt6"`。
+- **提交总线（Stage 7）**：所有写操作（文本 / 时间 / `[Script Info]`）先改 `AssFile`，然后调用 `AssFile::Commit(desc, type, amend_id, line)`。`UndoManager` 订阅 `PushState` 记快照，`SubtitleGridModel` / `EditBoxViewModel` 订阅 `AnnounceCommit` 刷新——不再有「改完再手动通知某个 model」的胶水代码。
+- **wx 隔离（`commit_bridge`）**：`AssFile::Commit` 收 `wxString`、`PushState` 的 `AssFileCommit` 里也带 `wxString`，而 Qt 翻译单元不能 include wx 头（宏/`slots` 冲突）。`commit_bridge.{h,cpp}` 编进 `ass_qt_core`（有 wx PCH），对 Qt 侧只暴露 UTF-8 `std::string` 的 `aegisub_qt::commit()` / `addUndoManager()`。
+- **Undo 快照**：`entries_[0]` 是干净基线，`entries_[i>0]` 是第 i 次提交后的文件状态；`pos_` 当前快照、`saved_pos_` 保存点，`isModified = pos_ != saved_pos_`（上限 100 步）。合并提交沿用原版契约：调用方把上次 `Commit` 返回的 id 再传回去，同 id 且栈顶就是当前状态时**覆盖**栈顶快照而不新增步骤；`EditBoxViewModel` / `PropertiesViewModel` 用 1000ms 单次定时器 + 行号/字段类型变化来断开合并，保存后也会断开（见坑 15）。
+- **撤销恢复**：`restoreTo()` 复制目标快照 → `AssFile::swap` 换回 → 发 `restored()`（不走 `Commit`，不会二次压栈）。此时所有 `AssDialogue*` 都失效，`SubtitleGridModel` 先 `beginResetModel`/重建 `rows_`，其它监听者（`EditBoxViewModel`、`PropertiesViewModel`、`DocumentViewModel`）再刷新。`AssFile` 拷贝构造函数不拷贝 `ProjectProperties`，快照里手工补（见坑 14）。
+- **脏标记与标题**：`DocumentViewModel::dirty` 直接返回 `UndoManager::isModified()`（撤销回保存点会自动变回 false）；标题为 `displayName + (dirty ? " *" : "") + " - Aegisub Qt6"`。`New`/`Open` 成功后 `resetToClean()`，保存成功 `markSaved()`。
+- **快捷键**：`Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` 由 `main.cpp` 里的应用级事件过滤器接管（`UndoShortcutFilter`）：先吃掉 `ShortcutOverride`（否则 `QQuickTextInput` 会用自己的撤销栈把键抢走、QML `Action.shortcut` 也拿不到），再处理 `KeyPress`。菜单 `Edit` 里另有 `Undo <desc>` / `Redo <desc>` 动态项（`enabled` 绑 `canUndo`/`canRedo`）。
+- **未保存保护**：`Main.qml` 的 `requestAction("new"/"open"/"quit")` 在 `documentVM.dirty` 时弹 Material 3 `Dialog`（`Save` / `Discard` / `Cancel`）；窗口 `onClosing` 也走同一入口（`forceClose` 标记让 `Discard` 之后能真正关闭）。`Save` 在未命名时转 `Save As`，保存成功后继续原动作。
 - **菜单/文件对话框**：`Main.qml` 的 `menuBar` 提供 File（New/Open/Save/Save As/Exit）、Subtitle（Properties）、Tools（Preferences）、Help（About），`QtQuick.Dialogs` 的 `FileDialog` 负责 Open / Save As。
 - **命令行**：`aegisub-qt.exe [file.ass]`，参数存在且是文件则启动即打开，否则 `newDocument()`。
 
@@ -83,6 +92,15 @@ aegisub_core ──► libaegisub（agi::Path / agi::Options / agi::Time / agi::
 ```
 
 `build.bat` 内部会：`vcvars64.bat` → `VSLANG=1033` → `PYTHONUTF8=0` → `ninja -C build`。**裸终端直接 `ninja -C build` 会因 cl 不在 PATH 失败**，需在 VS 开发者环境里执行。
+
+**本机 DSH 沙箱里的替代构建脚本**：在这个环境的 bash 里 `vcvars64.bat` 会失败（cmd 的 `for /F` 把整条命令当成一个 token，MSVC/SDK 环境根本没设起来），所以用 `.build-tools/build_ninja.sh`：
+
+```bash
+bash .build-tools/build_ninja.sh                    # 全量（wx + qt）
+bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
+```
+
+它手工拼 MSVC 14.52 / Windows SDK 10.0.26100 / Qt 6.6.3 / Python / gettext 的 `PATH`、`INCLUDE`、`LIB`（外加拿 VS 自带 CMake，meson 的 wxWidgets cmake subproject 需要），再 `ninja -C build`。另外 `subprojects/zlib-1.2.11` 的 DACL 不继承工作区授权，ninja 重建 `build.ninja` 时要 stat 它的 `meson.build`，因此该命令需要 full-access 文件权限（见坑 16）。
 
 **部署注意**：exe 目录 `build/src/qt_ui` 里有一份 windeployqt 的 Qt。使用 `QtQuick.Dialogs` 需要把 Qt 安装目录的 `qml/QtQuick/Dialogs`（含 `quickimpl` 全部文件）以及 `Qt6QuickDialogs2.dll`、`Qt6QuickDialogs2Utils.dll`、`Qt6QuickDialogs2QuickImpl.dll` 拷进去（本阶段已补齐）。
 
@@ -109,23 +127,41 @@ aegisub_core ──► libaegisub（agi::Path / agi::Options / agi::Time / agi::
 10. **菜单快捷键**：`Action.shortcut` 依赖 `StandardKey`，在窗口真正获得前台焦点时生效（自动化里需先点击窗口再 SendKeys）。
 11. **自动化验证**：UI Automation 的 `TogglePattern` 不会触发 QML `toggled`；`TextArea` 需 `ValuePattern.SetValue`；中文 IME 会干扰 SendKeys（自动化脚本可用 UTF-8 BOM 保存并临时切 US 键盘布局）。
 12. **部署的 Qt 依赖**：exe 旁 windeployqt 目录若缺 `QtQuick/Layouts` 或 `QtQuick/Dialogs` 会导致 “module ... is not installed”，需从 Qt 安装目录补齐 `qmldir`/插件 DLL/依赖 DLL。
+13. **`commit_id` 是回写指针**：`AssFileCommit::commit_id` 指向调用方（`Commit` 的 `amend_id` 参数），`PushState` 的接收者必须把最终采用的 id 写回去；`Commit` 的返回值就是它。合并提交判定必须同时检查「栈顶就是当前状态（`pos_ == size-1`）」，否则撤销后编辑会误改历史快照。
+14. **`AssFile` 拷贝构造函数不拷贝 `ProjectProperties`**（`Info`/`Styles`/`Events`/`Attachments`/`Extradata` 才拷）。做 undo 快照和恢复副本时都要手动 `copy.Properties = file->Properties`，否则一次撤销会把工程属性洗成默认值。
+15. **保存后不能再合并**：`markSaved()` 之后若继续把新编辑合并进栈顶（= 保存点）快照，会出现 `pos_ == saved_pos_` 但内容已改，脏标记永远为 false。`UndoManager::markSaved()` 会关闭一次合并开关。
+16. **本机 DSH 沙箱的两个环境坑**：(a) `cmd` 的 `for /F ('command')` 会把整条命令当成一个 token，导致 `vcvars64.bat`/`VsDevCmd.bat` 全部失效——用 `.build-tools/build_ninja.sh` 代替 `build.bat`；(b) `subprojects/zlib-1.2.11` 的 DACL 是保护态（不继承工作区授权），受限沙箱下列不出目录、ninja 重建 `build.ninja` 会 `Access is denied`，需要 full-access。两者都只是构建环境问题，与源码无关。
+17. **局部变量别叫 `restored`**：`UndoManager` 的信号就叫 `restored()`，在 `restoreTo()` 里用 `AssFile restored(...)` 会遮蔽信号名，`emit restored();` 直接编译失败（C2064）。同理信号名与成员变量不要撞。
+18. **`wxString::utf8_string()` 在这个 wx 版本没有**：用 `wxString::ToStdString(wxConvUTF8)` 转 UTF-8（`commit_bridge.cpp`）。
 
 ## 6. 已知限制（下一步工作）
 
 - **Save As 的原生对话框自动化未覆盖**：Windows 下 `FileDialog` 用系统对话框，自动化只验证了对话框弹出；保存逻辑本身（与 `saveFileAs` 共用 `saveToPath`）已通过 Ctrl+S 保存验证。
-- **无 Undo/Commit**：直接改 `AssDialogue`，未调用 `AssFile::Commit`（需要 `agi::Context` 与 wx undo 栈，后续引入）。
-- **网格是只读模型**：增删行、排序、多选、折叠都未实现；`refresh()` 是全量 reset。
-- **大文件性能**：`ListView` 已复用 delegate，但尚无分页/滚动加载；`rows_` 索引在增删行后需 `refresh()`。
+- **Edit 菜单不显示快捷键文本**：Qt Quick Controls 的 `MenuItem` 不渲染 `Action.shortcut` 的文本（Qt Widgets 的 QMenu 才会），所以菜单里只有 `Undo` / `Redo <desc>`，看不到 `Ctrl+Z`/`Ctrl+Y` 提示；快捷键本身由 `main.cpp` 的事件过滤器实现并已验证（要提示得给两个菜单项写自定义 `contentItem`）。
+- **撤销粒度**：快照式 undo 每次提交都深拷贝整个 `AssFile`（1000ms 合并窗口内只保留一份），大文件 + 高频输入时内存/CPU 有开销；栈上限 100 步，保存点被挤出后文档会一直显示「已修改」。
+- **网格是只读模型**：增删行、排序、多选、折叠都未实现；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 都是全量 `beginResetModel`。
+- **大文件性能**：`ListView` 已复用 delegate，但尚无分页/滚动加载。
 - **没有最近文件列表 / 另存时的编码选择器**（当前保存固定 UTF-8，打开时自动检测）。
-- **只做了 Backup 一个首选项页**、Properties 只做了 3 个字段。
+- **未保存确认框**：`Save` 分支里如果用户取消了「另存为」系统对话框，原动作（New/Open/退出）会停住而不是继续/中止；没有「稍后再说」以外的记忆。
+- **只做了 Backup 一个首选项页**、Properties 只做了 3 个字段（标题是每次按键提交，靠 1000ms 合并成一步）。
 - **bestsource** 在本机构建中被禁用（子模块 `libp2p` 在 bitbucket 需要认证），视频源只有 ffms2。
 
 ## 7. 验证方式
 
-- 编译：`.build-tools\build.bat aegisub-qt`（EXIT 0）、`.build-tools\build.bat`（wx 回归 EXIT 0）。
+- 编译：`.build-tools\build.bat aegisub-qt`（EXIT 0）、`.build-tools\build.bat`（wx 回归 EXIT 0）。本机 DSH 沙箱里改用 `bash .build-tools/build_ninja.sh [target]`（见 §4），Stage 7 实测 `aegisub-qt` 与全量（wx + qt）均 EXIT 0。
 - 运行验证用 UI Automation + `PrintWindow` 截取窗口（不抓桌面），已确认：
   - About：版本/版权/简体中文译员名单；
   - Preferences：开关写回 `agi::Options` 并落盘 `config.json`；
   - Properties：改 Title/PlayRes 后 `dumpAss()` 输出的 `[Script Info]` 反映修改；
   - Grid/EditBox：点击行 → 底部显示该行时间与文本；编辑文本 → 网格对应行实时更新；
   - Stage 6：`aegisub-qt test.ass` 打开含中文/多行/多样式的文件 → 编辑文本与开始时间 → 标题出现 ` *` → Ctrl+S 保存 → 标题 ` *` 消失 → 重新打开文件，网格与 EditBox 内容为修改后的值，`[Script Info]`（Title/PlayResX/PlayResY）与 `[V4+ Styles]`（Default/Title）完整保留（截图 `.build-tools/qt_*_check.png`、`.build-tools/stage6_result.png`，不入库）。
+  - Stage 7（`aegisub-qt test.ass`，脚本 + 16 张截图 + 机器可读状态在 `.build-tools/stage7/`，不入库）：
+    - 打开 → 标题无 `*`、EditBox 与网格第 1 行一致；
+    - TextArea 内逐字符输入 → 标题出现 `*`、网格与 EditBox 同步；
+    - **焦点在 TextArea 时按 Ctrl+Z** → EditBox 与网格**同时**回退、标题 `*` 消失；Ctrl+Y → 修改恢复、`*` 重现；
+    - 合并提交：6 个字符（间隔约 155ms）输入后**一次** Ctrl+Z 全部回退（不是只删末字符）；
+    - 未保存确认框：`Ctrl+N` / 窗口关闭都弹 Save·Discard·Cancel；Cancel 内容不丢，Discard 新建/退出成功；
+    - 保存点：Ctrl+S 去 `*`，随后 Ctrl+Z 回原值并重新变脏；Ctrl+Y 回到保存点自动变干净；
+    - Properties：改 Title → 主窗口变脏，Ctrl+Z → Title 字段与主标题同时回退（`PropertiesViewModel` 订阅 `restored`）；
+    - Edit 菜单：栈空时 `Undo` 置灰，`Redo <desc>` 显示历史名（动态文案）；
+    - 已知限制：菜单里不显示 `Ctrl+Z`/`Ctrl+Y` 文本（见 §6）。

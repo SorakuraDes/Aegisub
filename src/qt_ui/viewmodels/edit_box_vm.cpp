@@ -3,7 +3,10 @@
 #include "../../ass_file.h"
 
 #include "edit_box_vm.h"
+
+#include "../commit_bridge.h"
 #include "subtitle_grid_model.h"
+#include "undo_manager.h"
 
 #include "../../ass_dialogue.h"
 
@@ -22,20 +25,48 @@ std::string toStdString(QString const &s) {
     return std::string(utf8.constData(), size_t(utf8.size()));
 }
 
+/// Keeps in_self_commit_ balanced even if Commit ever throws.
+struct SelfCommitFlag {
+    bool &flag;
+    explicit SelfCommitFlag(bool &flag) : flag(flag) { flag = true; }
+    ~SelfCommitFlag() { flag = false; }
+};
+
+/// How long consecutive edits of the same field keep folding into one undo step.
+constexpr int kCoalesceWindowMs = 1000;
+
 } // namespace
 
-EditBoxViewModel::EditBoxViewModel(SubtitleGridModel *model, QObject *parent)
+EditBoxViewModel::EditBoxViewModel(SubtitleGridModel *model, AssFile *file,
+                                   UndoManager *undoManager, QObject *parent)
 : QObject(parent)
 , model_(model)
+, file_(file)
+, undo_manager_(undoManager)
+, coalesce_timer_(this)
 {
+    coalesce_timer_.setSingleShot(true);
+    coalesce_timer_.setInterval(kCoalesceWindowMs);
+    connect(&coalesce_timer_, &QTimer::timeout, this, [this] { commit_id_ = -1; });
+
     if (model_) {
-        connect(model_, &SubtitleGridModel::activeRowChanged,
-                this, &EditBoxViewModel::reload);
+        connect(model_, &SubtitleGridModel::activeRowChanged, this, [this] {
+            resetCoalescing();
+            reload();
+        });
         // Opening a new file resets the model; make sure the editors reload
         // instead of showing a line from the previous document.
-        connect(model_, &QAbstractItemModel::modelReset,
-                this, &EditBoxViewModel::reload);
+        connect(model_, &QAbstractItemModel::modelReset, this, [this] {
+            resetCoalescing();
+            reload();
+        });
     }
+
+    if (file_)
+        commit_connection_ = file_->AddCommitListener(&EditBoxViewModel::onFileCommitted, this);
+
+    if (undo_manager_)
+        connect(undo_manager_, &UndoManager::restored, this, &EditBoxViewModel::onRestored);
 }
 
 AssDialogue *EditBoxViewModel::active() const {
@@ -48,6 +79,54 @@ void EditBoxViewModel::reload() {
     emit textChanged();
     emit startTimeChanged();
     emit endTimeChanged();
+}
+
+void EditBoxViewModel::resetCoalescing() {
+    commit_id_ = -1;
+    last_type_ = 0;
+    last_row_ = -1;
+    coalesce_timer_.stop();
+}
+
+void EditBoxViewModel::onFileCommitted(int type, const AssDialogue *) {
+    if (in_self_commit_)
+        return;
+
+    // Only commits that can change the active line's content matter here;
+    // script-info/style edits must not reset the field the user is typing in.
+    const bool line_related =
+        type == AssFile::COMMIT_NEW
+        || (type & (AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL)) != 0;
+    if (!line_related)
+        return;
+
+    resetCoalescing();
+    reload();
+    emit externalReload();
+}
+
+void EditBoxViewModel::onRestored() {
+    resetCoalescing();
+    reload();
+    emit externalReload();
+}
+
+void EditBoxViewModel::commitEdit(const QString &description, int type, AssDialogue *line) {
+    if (!file_ || !line)
+        return;
+
+    // Switching line or field starts a new undo step even inside the timer
+    // window; staying on the same field keeps amending the current one.
+    const int row = model_ ? model_->activeRow() : -1;
+    if (last_type_ != type || last_row_ != row)
+        commit_id_ = -1;
+    last_type_ = type;
+    last_row_ = row;
+
+    SelfCommitFlag guard(in_self_commit_);
+    commit_id_ = aegisub_qt::commit(file_, toStdString(description), type, commit_id_, line);
+
+    coalesce_timer_.start();
 }
 
 QString EditBoxViewModel::text() const {
@@ -63,10 +142,8 @@ void EditBoxViewModel::setText(const QString &value) {
     if (line->Text.get() == new_text)
         return;
     line->Text = new_text;
-    if (model_)
-        model_->notifyRowUpdated(model_->activeRow());
+    commitEdit(QStringLiteral("Edit text"), AssFile::COMMIT_DIAG_TEXT, line);
     emit textChanged();
-    emit edited();
 }
 
 QString EditBoxViewModel::startTime() const {
@@ -82,10 +159,8 @@ void EditBoxViewModel::setStartTime(const QString &value) {
     if (int(line->Start) == int(parsed))
         return;
     line->Start = parsed;
-    if (model_)
-        model_->notifyRowUpdated(model_->activeRow());
+    commitEdit(QStringLiteral("Edit start time"), AssFile::COMMIT_DIAG_TIME, line);
     emit startTimeChanged();
-    emit edited();
 }
 
 QString EditBoxViewModel::endTime() const {
@@ -101,8 +176,6 @@ void EditBoxViewModel::setEndTime(const QString &value) {
     if (int(line->End) == int(parsed))
         return;
     line->End = parsed;
-    if (model_)
-        model_->notifyRowUpdated(model_->activeRow());
+    commitEdit(QStringLiteral("Edit end time"), AssFile::COMMIT_DIAG_TIME, line);
     emit endTimeChanged();
-    emit edited();
 }
