@@ -3,6 +3,8 @@
 #include "../ass_file.h"
 
 #include "aegisub_core.h"
+#include "video_bridge.h"
+#include "video_viewport_item.h"
 #include "viewmodels/about_vm.h"
 #include "viewmodels/app_info_vm.h"
 #include "viewmodels/document_vm.h"
@@ -14,6 +16,7 @@
 #include "viewmodels/subtitle_grid_model.h"
 #include "viewmodels/translation_service.h"
 #include "viewmodels/undo_manager.h"
+#include "viewmodels/video_vm.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -23,6 +26,7 @@
 #include <QKeyEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QtQml>
 
 namespace {
 
@@ -138,6 +142,12 @@ int main(int argc, char *argv[]) {
     if (!core_ok)
         qWarning() << "Aegisub core initialization failed:" << core_error;
 
+    // libass library + the background font-cache build. Doing this at startup
+    // (like src/main.cpp does for the wx frontend) keeps the first video frame
+    // from paying for the font index.
+    if (core_ok)
+        aegisub_qt::VideoBridge::Initialize();
+
     // The document currently being edited. DocumentViewModel fills it with
     // either the default new-file content or a file passed on the command line.
     AssFile script;
@@ -158,11 +168,15 @@ int main(int argc, char *argv[]) {
     DocumentViewModel documentVM(&script, &gridModel, &undoManager);
     SearchViewModel searchVM(&script, &gridModel);
     StylesViewModel stylesVM(&script, &undoManager);
+    VideoViewModel videoVM(&script, &gridModel, &undoManager);
 
     // New/Open does not go through AssFile::Commit, so the style index has to
     // be told about a fresh document explicitly.
     QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
                      &stylesVM, &StylesViewModel::handleDocumentReload);
+    // The video preview caches a libass track, so it needs the same treatment.
+    QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
+                     &videoVM, &VideoViewModel::handleDocumentReload);
 
     UndoShortcutFilter undoFilter(&undoManager);
     app.installEventFilter(&undoFilter);
@@ -170,6 +184,9 @@ int main(int argc, char *argv[]) {
     // The body TextArea eats Return itself; see BodyEnterFilter.
     BodyEnterFilter bodyEnterFilter(&editBoxVM);
     app.installEventFilter(&bodyEnterFilter);
+
+    // QML-only wrapper that paints the frame exposed by VideoViewModel.
+    qmlRegisterType<VideoViewportItem>("Aegisub", 1, 0, "VideoViewport");
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("i18n", &i18n);
@@ -183,10 +200,25 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("undoVM", &undoManager);
     engine.rootContext()->setContextProperty("searchVM", &searchVM);
     engine.rootContext()->setContextProperty("stylesVM", &stylesVM);
+    engine.rootContext()->setContextProperty("videoVM", &videoVM);
 
-    // Optional first command line argument: a subtitle file to open.
+    // Command line: an optional subtitle file plus "--video <path>", which lets
+    // the automated checks open both documents and a video in one go.
     const QStringList args = QCoreApplication::arguments();
-    const QString startup_file = args.size() > 1 ? args.at(1) : QString();
+    QString startup_file;
+    QString startup_video;
+    for (int i = 1; i < args.size(); ++i) {
+        const QString &arg = args.at(i);
+        if (arg == QLatin1String("--video") && i + 1 < args.size()) {
+            startup_video = args.at(++i);
+            continue;
+        }
+        if (arg.startsWith(QLatin1Char('-')))
+            continue;
+        if (startup_file.isEmpty())
+            startup_file = arg;
+    }
+
     if (!startup_file.isEmpty() && QFileInfo(startup_file).isFile()) {
         if (!documentVM.openLocalPath(startup_file))
             qWarning() << "Failed to open" << startup_file << ":" << documentVM.lastError();
@@ -198,6 +230,14 @@ int main(int argc, char *argv[]) {
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;
+
+    // Open the command-line video only after QML is up: VideoPanel would miss
+    // the frameReady() signal emitted during a pre-engine open and show a black
+    // viewport until the next frame change.
+    if (!startup_video.isEmpty() && QFileInfo(startup_video).isFile()) {
+        if (!videoVM.openLocalPath(startup_video))
+            qWarning() << "Failed to open video" << startup_video << ":" << videoVM.lastError();
+    }
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [] {
         QString error;

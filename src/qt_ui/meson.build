@@ -17,6 +17,8 @@ qt6_moc = qt6.preprocess(
         'viewmodels/undo_manager.h',
         'viewmodels/search_vm.h',
         'viewmodels/styles_vm.h',
+        'viewmodels/video_vm.h',
+        'video_viewport_item.h',
     ),
     include_directories: [include_directories('.')],
     dependencies: qt6_dep,
@@ -70,6 +72,33 @@ ass_qt_core = static_library('ass_qt_core',
     cpp_args: ['/utf-8'],
 )
 
+# av_qt_core: the wxWidgets frontend's video/subtitle provider sources, compiled
+# for the Qt process. They are unchanged originals (src/ is off limits); the
+# only Qt-specific pieces are the wx-free bridge and the synchronous background
+# runner. A wx precompiled header is required because the originals still use wx
+# helpers (wxString formatting, the multi-track selection dialog).
+av_qt_core = static_library('av_qt_core',
+    files(
+        '../ffmpegsource_common.cpp',
+        '../video_provider_ffmpegsource.cpp',
+        '../video_provider_dummy.cpp',
+        '../video_provider_cache.cpp',
+        '../colorspace.cpp',
+        '../subtitles_provider.cpp',
+        '../subtitles_provider_csri.cpp',
+        '../subtitles_provider_libass.cpp',
+        # ColorMatrix helpers extracted from video_provider_manager.cpp (which
+        # also contains wx dialogs and must not be linked here).
+        'color_matrix.cpp',
+        'qt_background_runner.cpp',
+        'video_bridge.cpp',
+    ),
+    include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('..')],
+    dependencies: deps,
+    cpp_pch: ['../include/agi_pre.h'],
+    cpp_args: ['/utf-8'],
+)
+
 aegisub_qt = executable('aegisub-qt',
     files(
         'main.cpp',
@@ -85,13 +114,15 @@ aegisub_qt = executable('aegisub-qt',
         'viewmodels/undo_manager.cpp',
         'viewmodels/search_vm.cpp',
         'viewmodels/styles_vm.cpp',
+        'viewmodels/video_vm.cpp',
+        'video_viewport_item.cpp',
         '../version.cpp',
     ),
     qt6_moc,
     qt6_resources,
     version_h,
     include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.'), include_directories('..')],
-    link_with: [libaegisub, ass_qt_core],
+    link_with: [libaegisub, ass_qt_core, av_qt_core],
     dependencies: [qt6_dep] + deps,
     cpp_args: ['/utf-8'],
 )

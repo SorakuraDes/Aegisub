@@ -225,6 +225,15 @@ ApplicationWindow {
         onActivated: gridModel.selectAll()
     }
 
+    // Video preview: jump to the active line. Play/step are buttons in the
+    // VideoPanel transport bar (no global Space binding on purpose: it would
+    // fight every focused button in the window).
+    Shortcut {
+        sequence: "Ctrl+J"
+        enabled: videoVM.hasVideo
+        onActivated: videoVM.seekToActiveLine()
+    }
+
     // ---- Compact desktop menu bar ----------------------------------------
 
     menuBar: MenuBar {
@@ -360,6 +369,31 @@ ApplicationWindow {
         }
 
         Menu {
+            title: "&Video"
+            ShortcutMenuItem {
+                text: i18n.t("Open Video...")
+                onTriggered: videoDialog.open()
+            }
+            ShortcutMenuItem {
+                text: i18n.t("Use Dummy Video")
+                onTriggered: videoVM.openDummyVideo(0, 0, 0, 0)
+            }
+            MenuSeparator {}
+            ShortcutMenuItem {
+                text: i18n.t("Close Video")
+                enabled: videoVM.hasVideo
+                onTriggered: videoVM.closeVideo()
+            }
+            MenuSeparator {}
+            ShortcutMenuItem {
+                text: i18n.t("Jump to Active Line")
+                shortcutText: "Ctrl+J"
+                enabled: videoVM.hasVideo
+                onTriggered: videoVM.seekToActiveLine()
+            }
+        }
+
+        Menu {
             title: "&Tools"
             ShortcutMenuItem {
                 text: i18n.t("Preferences...")
@@ -399,6 +433,14 @@ ApplicationWindow {
                 mainWindow.performAction(action)
             }
         }
+    }
+
+    FileDialog {
+        id: videoDialog
+        title: "Open video file"
+        nameFilters: ["Video files (*.mp4 *.mkv *.avi *.webm *.mov *.ts)", "All files (*)"]
+        fileMode: FileDialog.OpenFile
+        onAccepted: videoVM.openVideo(selectedFile)
     }
 
     // Material 3 style guard against losing unsaved changes.
@@ -493,7 +535,9 @@ ApplicationWindow {
             }
         }
 
-        // Desktop workspace: draggable vertical split between grid and editor.
+        // Desktop workspace: draggable vertical split between the video preview
+        // (only present once a video is open, so the M1 layout is unchanged
+        // otherwise), the grid and the editor.
         SplitView {
             id: mainSplit
             Layout.fillWidth: true
@@ -503,6 +547,14 @@ ApplicationWindow {
             handle: Rectangle {
                 implicitHeight: 6
                 color: SplitHandle.hovered ? "#3a3a3a" : "#1e1e1e"
+            }
+
+            Loader {
+                id: videoPanelLoader
+                source: "qrc:/VideoPanel.qml"
+                visible: videoVM.hasVideo
+                SplitView.preferredHeight: 300
+                SplitView.minimumHeight: 180
             }
 
             Loader {

@@ -19,21 +19,29 @@
 | 8A | `b5278c711` | 网格行操作 `insertBefore`/`insertAfter`/`duplicateRow`/`deleteRow`（走 `COMMIT_DIAG_ADDREM`，原生 Undo/Redo）+ 网格右键上下文菜单 + `Subtitle` 菜单 4 项 + 焦点隔离快捷键（`Delete`/`Insert`/`Ctrl+D`） |
 | 8B | `8061f69d5` | EditBox 补齐核心字段（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`）+ `availableStyles` + 时长联动 + Enter 键盘流（`Enter` 提交并下一行、`Shift+Enter` 插 `\N`，由 C++ 键过滤器实现）；`EditBox.qml` 重排为两行顶栏 + 正文区 |
 | 9A | `04e26bb7c` | 网格多选（`selected_rows_`/`anchor`/`isSelected` role/`selectionCount`、`selectSingle`/`toggleSelect`/`selectRange`/`selectAll`）+ 批量行操作与批量元数据（单次 Commit、一次撤销全部）+ `SearchViewModel`/`SearchDialog.qml` 查找替换（正则/字段/选区范围、`Replace All` 单次提交） |
-| 9B | 本次工作区改动（未提交） | **M1 终章**：样式管理器（`StylesViewModel` + `StylesWindow.qml`：增删复制/改名联动字幕行、字体字号颜色对齐边距、实时预览）+ 主窗口竖直 `SplitView` + 紧凑菜单栏（28px + 快捷键提示列，`ShortcutMenuItem.qml`）+ 24px 底部状态栏（行数/选区/编码/版本） |
+| 9B | `ae2cd9d97` | **M1 终章**：样式管理器（`StylesViewModel` + `StylesWindow.qml`：增删复制/改名联动字幕行、字体字号颜色对齐边距、实时预览）+ 主窗口竖直 `SplitView` + 紧凑菜单栏（28px + 快捷键提示列，`ShortcutMenuItem.qml`）+ 24px 底部状态栏（行数/选区/编码/版本） |
+| 10A | 本次工作区改动（未提交） | **M2a 视频预览**：`av_qt_core` 静态库（原版 ffms2 / Dummy 视频 provider + libass 字幕 provider + wx 隔离桥 `video_bridge`）+ `VideoViewModel` / `VideoViewportItem` / `VideoPanel.qml`：加载真实视频或 Dummy 视频 → libass 实时渲染当前 `AssFile` → 逐帧定位 / 拖动 / 播放 → 编辑与撤销实时重绘画面 |
 
 > **M1 里程碑（Stage 0–9B）**：Qt6/QML 前端已具备与 wx 版并行的日常编辑能力——真实 `.ass` 读写、统一提交/撤销总线、行操作与多选批量、EditBox 全字段与键盘流、查找替换、样式管理器，以及桌面级工作区（紧凑菜单/可拖拽分区/状态栏）。原版 wx 构建同步保持可用（双轨制）。
+
+> **M2a 里程碑（Stage 10A）**：视频预览闭环打通——`Video` 菜单可开真实视频（ffms2）或 Dummy 视频，libass 把当前脚本实时渲染到视频帧上；切行自动 seek、逐帧步进/点时间轴/播放暂停可用，EditBox 改字与 `Ctrl+Z` 撤销都会立即反映到画面上；无视频时视频区完全隐藏，M1 布局不变。
 
 ## 2. 目录结构
 
 ```
 src/qt_ui/
-├── main.cpp                  # 入口：初始化 core → 建 AssFile → 建 VM → 可选命令行文件 → 注入 QML
+├── main.cpp                  # 入口：初始化 core/libass → 建 AssFile → 建 VM → 注入 QML（--video 在 QML 后打开）
 ├── aegisub_core.{h,cpp}      # libaegisub 子系统初始化（dispatch/log/Path/Options）、FlushOptions
 ├── commit_bridge.{h,cpp}     # wx 隔离层：Commit/AddUndoManager 的 std::string 版（.cpp 编进 ass_qt_core）
 ├── subtitle_format_shim.cpp  # 方案 B：补 SubtitleFormat 的 ctor/CanReadFile/CanWriteFile/CanSave
-├── meson.build               # aegisub-qt 目标；ass_qt_core 静态库（ASS 数据模型 + I/O，需 wx PCH）
+├── video_bridge.{h,cpp}      # wx 隔离层：建 ffms2/Dummy VideoProvider、libass SubtitlesProvider，取帧+叠加渲染（编进 av_qt_core）
+├── color_matrix.cpp          # 从 video_provider_manager.cpp 提取的 4 个 ColorMatrix::* 函数（编进 av_qt_core）
+├── qt_background_runner.{h,cpp} # 同步版 agi::BackgroundRunner / ProgressSink（编进 av_qt_core）
+├── video_viewport_item.{h,cpp}  # QQuickPaintedItem，注册为 QML `VideoViewport`（黑底、等比居中、直接吃 QImage）
+├── meson.build               # aegisub-qt 目标；ass_qt_core / av_qt_core 两个静态库（均需 wx PCH）
 ├── resources.qrc             # 全部 QML 注册到 qrc:/
-├── Main.qml                  # 主窗口：MenuBar + 字幕网格 + 底部 EditBox + 错误提示条 + FileDialog
+├── Main.qml                  # 主窗口：MenuBar + 竖直 SplitView（视频/网格/EditBox）+ 错误提示条 + FileDialog
+├── VideoPanel.qml            # 视频预览面板：VideoViewport + 34px 紧凑控制条（播放/步进/时间轴/帧号时间码/Sync）
 ├── SubtitleGrid.qml          # 表格视图（ListView + RowLayout delegate、选中高亮）
 ├── EditBox.qml               # 底部编辑框：开始/结束时间 + 大字幕文本框
 ├── AboutWindow.qml           # 关于窗口（版本/版权/译员，来自 po/*.mo）
@@ -53,6 +61,7 @@ src/qt_ui/
     ├── undo_manager.{h,cpp}         # 快照式 Undo/Redo 栈 + 合并提交 + isModified
     ├── search_vm.{h,cpp}            # 查找/替换（正则、字段、选区范围、单次提交）
     ├── styles_vm.{h,cpp}            # [V4+ Styles] 样式列表/字段编辑、改名联动字幕行
+    ├── video_vm.{h,cpp}             # 视频预览 VM：开视频/Dummy、取帧+libass 叠加、seek/步进/播放、提交/撤销实时重绘
     └── document_vm.{h,cpp}          # 文件路径/脏标记/错误 + 打开保存（AssParser/AssSubtitleFormat）
 ```
 
@@ -90,8 +99,14 @@ aegisub_core ──► libaegisub（agi::Path / agi::Options / agi::Time / agi::
 - **查找与替换（Stage 9A）**：`SearchViewModel` 独立持有 `AssFile*` + `SubtitleGridModel*`，按 `searchField`（0=Text、1=Actor、2=Effect、3=Style）取字段；普通模式用 `QString::contains`（可选大小写），正则模式用 `QRegularExpression`（非法正则只写 `statusMessage`，不崩溃）。`findNext`/`findPrev` 从活动行环形查找，命中后 `selectSingle` 并发 `locateRow`（QML 里 `positionViewAtIndex`）。`replaceAll` 遍历全表或 `inSelectionOnly` 时的选中行，累计后**单次** `Commit`，状态行报 `Replaced N occurrence(s) in M line(s)`；`replaceCurrent` 替换活动行后自动跳下一处。搜索窗口是独立的非模态 `Window`，`Edit→Find...`（`Ctrl+F`）/`Replace...`（`Ctrl+H`）复用同一实例并聚焦对应输入框，主窗口关闭时一起关闭。
 - **样式管理器（Stage 9B）**：`StylesViewModel` 持有 `AssFile*`，自己维护 `std::vector<AssStyle*>` 索引 + 名称缓存（`refreshStyles()` 只从缓存重建，不 deref 旧指针，因此 `restored()` 里调用是安全的）；所有字段修改先写 `AssStyle`，再 `UpdateData()`（`AssStyle` 缓存了它的 ASS 行）后 `Commit(COMMIT_STYLES)`，1000ms 合并窗口避免每次 SpinBox 都成一步撤销。改名会同时改 `AssFile::Events` 里的 `Style` 与正文中 `{\rOld}` 覆写标签（`AssDialogue::ParseTags`/`UpdateText` + `ProcessParameters`），以 `COMMIT_STYLES | COMMIT_DIAG_META` **单次**提交。`New`/`Copy`/`Delete` 的名字用大小写不敏感去重，且保证至少保留一条样式。`New`/`Open` 不走 `Commit`，所以 `DocumentViewModel::documentReloaded()` 显式通知样式表重建。
 - **桌面工作区（Stage 9B）**：内容区是竖直 `SplitView`（网格 `fillHeight`/min 160，EditBox preferred 185/min 150），可拖拽调比例；`MenuBar` 用自定义 delegate 压到 28px、字号 13px，菜单项改用 `ShortcutMenuItem`（平铺 `MenuItem` + `contentItem` 里左右两段文字）显示快捷键提示——Qt Quick 的 `MenuItem` 本身不渲染快捷键列；快捷键因此全部改用 `Shortcut` 元素注册（`Ctrl+Z/Y` 仍由 `main.cpp` 的过滤器处理）。`footer` 是 24px 状态栏（行数 / 选区数 / 编码 / 版本号）。
-- **菜单/文件对话框**：`Main.qml` 的 `menuBar` 提供 File（New/Open/Save/Save As/Exit）、Subtitle（Properties）、Tools（Preferences）、Help（About），`QtQuick.Dialogs` 的 `FileDialog` 负责 Open / Save As。
-- **命令行**：`aegisub-qt.exe [file.ass]`，参数存在且是文件则启动即打开，否则 `newDocument()`。
+- **视频预览（Stage 10A）**：`av_qt_core` 静态库把原版**无 GUI** 的 provider 源文件（`ffmpegsource_common.cpp`、`video_provider_ffmpegsource.cpp`、`video_provider_dummy.cpp`、`video_provider_cache.cpp`、`colorspace.cpp`、`subtitles_provider.cpp`、`subtitles_provider_libass.cpp`、`subtitles_provider_csri.cpp`）编进 Qt 进程；`color_matrix.cpp` 只搬运 `video_provider_manager.cpp` 里 4 个无 wx 的 `ColorMatrix::*`，不链接带 wx 对话框的 manager。provider 需要 wx PCH，因此 `av_qt_core` 与 `ass_qt_core` 一样用 `cpp_pch: ../include/agi_pre.h`。
+- **wx 隔离（`video_bridge`）**：Qt 翻译单元不能 include wx/`agi::signal` 头，`video_bridge.{h,cpp}` 对 Qt 侧只暴露纯 C++ 接口（`OpenFile` / `OpenDummy` / `LoadSubtitles` / `DecodeFrame` / `FrameData` …）。实现里，ffms2 走 `CreateFFmpegSourceVideoProvider` 再包 `CreateCacheVideoProvider`，Dummy 直接 `new DummyVideoProvider`，字幕用 `libass::Create` + `SubtitlesProvider::LoadSubtitles(AssFile*)`。`QtBackgroundRunner` 是同步版 `agi::BackgroundRunner`/`ProgressSink`（M2a 没有进度对话框），因此首次索引/字体缓存构建会阻塞 UI，见 §6。
+- **帧格式守卫**：`DecodeFrame()` 在调 `SubtitlesProvider::DrawSubtitles()` **之前**检查 `frame.pitch != frame.width * 4`，有行 padding 就先紧凑重排（原版 libass blender 假定 `pitch == width*4`，不能改原文件）；`VideoViewModel` 再把 BGRA8 直接装进 `QImage::Format_ARGB32`（Windows 小端零转换），`frame.flipped` 时做一次垂直翻转。libass 会把叠加像素的 alpha 字节写成 0，转 QImage 后统一把 alpha 置 255，否则 `QPainter` 会把字幕画成透明洞。
+- **实时字幕联动**：`VideoViewModel` 订阅 `AssFile::AddCommitListener`（100ms 防抖，避免逐字符输入时反复重建 libass track）、`UndoManager::restored`（延后一拍，等网格重建索引）和 `DocumentViewModel::documentReloaded`；有视频时每次都会 `videoVM → bridge.LoadSubtitles(file_)` 并重绘当前帧，所以 EditBox 改字、Styles Manager 改色/字号、Undo/Redo 都**立即**出现在画面上。`gridModel.activeRowChanged` 在 `hasVideo && autoSeekToActiveLine && !isPlaying` 时用 `FrameAtTime(start, agi::vfr::START)` seek（保证行首那一帧就可见），对应 wx 版 `video/jump/start` 的语义。
+- **视频控制与渲染**：播放用 `QTimer` 按平均 FPS 起跳、但以墙钟推进（丢 tick 只跳帧不会变慢），到尾自动停；`VideoViewportItem`（`QQuickPaintedItem`，QML 名 `VideoViewport`）持有 `QImage`、黑底等比 letterbox，帧通过 `VideoViewModel::frameReady(QImage)` 直接推给它（不走 `QQuickImageProvider`，URL 缓存问题少且 `PrintWindow` 截图稳定）。`VideoPanel.qml` 底部 34px 控制条：Play/Pause、`◀`/`▶` 单帧、`0..frameCount-1` 时间轴、`Frame N / total  H:MM:SS.CC`、`Sync`（绑 `autoSeekToActiveLine`）。
+- **视频菜单/命令行**：`Video` 菜单位于 `Subtitle` 与 `Tools` 之间：Open Video...、Use Dummy Video、Close Video、Jump to Active Line（`Ctrl+J`）。VideoPanel 作为竖直 `SplitView` 第一项，`visible: videoVM.hasVideo`（无视频时 SplitView 自动折叠，M1 布局完全不变），打开后 preferred 300px / min 180。命令行 `aegisub-qt.exe [file.ass] [--video <path>]`；`--video` 在 `engine.load()` **之后**才打开（否则首帧 `frameReady` 早于 QML 存在，视频区会一直黑到下一次帧变化）。
+- **菜单/文件对话框**：`Main.qml` 的 `menuBar` 提供 File（New/Open/Save/Save As/Exit）、Edit（Undo/Redo/Find/Replace）、Subtitle（行操作/样式/属性）、Video（Open/Dummy/Close/Jump）、Tools（Preferences）、Help（About）；`QtQuick.Dialogs` 的 `FileDialog` 负责字幕后缀与视频文件选择。
+- **命令行**：`aegisub-qt.exe [file.ass] [--video <path>]`，字幕参数存在且是文件则启动即打开，否则 `newDocument()`；`--video` 指向的现有文件在 QML 就绪后打开。
 
 ## 4. 构建与运行
 
@@ -121,6 +136,8 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 
 它手工拼 MSVC 14.52 / Windows SDK 10.0.26100 / Qt 6.6.3 / Python / gettext 的 `PATH`、`INCLUDE`、`LIB`（外加拿 VS 自带 CMake，meson 的 wxWidgets cmake subproject 需要），再 `ninja -C build`。另外 `subprojects/zlib-1.2.11` 的 DACL 不继承工作区授权，ninja 重建 `build.ninja` 时要 stat 它的 `meson.build`，因此该命令需要 full-access 文件权限（见坑 16）。
 
+**Stage 10A 的构建变化**：`src/qt_ui/meson.build` 新增 `av_qt_core` 静态库（视频/字幕 provider 原件 + wx 隔离桥），`aegisub-qt` 改为 `link_with: [libaegisub, ass_qt_core, av_qt_core]`；根 `meson.build` 不需要改——`aegisub-qt` 本来就从根 `deps` 继承 `ffms2`/`libass`/`libav*` 的依赖与链接（`build.ninja` 里能看到 `libffms2.a`、`libass.a`、`libav*.a`）。视频解码/字幕渲染都是静态链接，部署目录不需要额外 DLL。
+
 **部署注意**：exe 目录 `build/src/qt_ui` 里有一份 windeployqt 的 Qt。使用 `QtQuick.Dialogs` 需要把 Qt 安装目录的 `qml/QtQuick/Dialogs`（含 `quickimpl` 全部文件）以及 `Qt6QuickDialogs2.dll`、`Qt6QuickDialogs2Utils.dll`、`Qt6QuickDialogs2QuickImpl.dll` 拷进去（本阶段已补齐）。
 
 调试用环境变量：
@@ -128,7 +145,7 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 | 变量 | 作用 |
 |---|---|
 | `AEGISUB_QT_LANGUAGE=zh_CN` | 强制翻译 catalog（默认跟随系统区域；本机 zh-HK 无对应 po，会回退英文） |
-| `AEGISUB_QT_CONFIG_DIR=<dir>` | 覆盖 `?user` 目录（避免污染真实 `%APPDATA%\Aegisub`，也用于沙箱环境） |
+| `AEGISUB_QT_CONFIG_DIR=<dir>` | 覆盖 `?user`，沙箱下同时覆盖 `?local`（ffms2 索引缓存也落在该目录），避免污染真实 `%APPDATA%\Aegisub`，也用于自动化测试 |
 | `AEGISUB_QT_TRACE=1` | 把启动阶段写入 exe 旁 `aegisub_qt_core.log` |
 | `AEGISUB_PO_DIR=<dir>` | 覆盖 `.mo` 搜索根（默认相对 exe 的 `../../po`） |
 
@@ -163,6 +180,12 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 27. **`ass_override.h` 没有 include guard**：`ass_dialogue.h` 已经 include 了它，再显式 include 会 C2011 重定义（和坑 3 的 `option_value.h` 同一类问题）。改名联动 `{\r...}` 标签时直接用 `AssDialogue::ParseTags` / `AssDialogue::BlockOverride::ProcessParameters` 即可。
 28. **`AssStyle` 缓存了它的 ASS 行**：改完 `name`/`font`/颜色等字段后必须 `AssStyle::UpdateData()` 再 `Commit`，否则写盘用的还是旧串（这也是改名要 `UpdateData()` 的原因）。
 29. **Material `Button` 压到 28px 高会看不到文字**：Material 默认上下 padding 合计超过按钮高度，contentItem 被裁掉（实测样式管理器左下的 New/Copy/Delete 变成空胶囊）。压高度时同时把 `topPadding`/`bottomPadding` 归零、高度给到 30px，或干脆自绘（3×3 对齐键盘就是自绘 Rectangle + Label）。
+30. **原版视频 provider 把 wx 也带进来了**：`video_provider_ffmpegsource.cpp`/`ffmpegsource_common.cpp` 里有多轨选择用的 `wxGetSingleChoiceIndex`，`subtitles_provider_libass.cpp` 有 `wx/intl.h`/`wxThread::IsMain()`；`av_qt_core` 用 wx PCH 编译这些原件即可（Qt 进程已链接 `libwxmono.a`）。但**多视频轨文件会弹 wx 对话框**（Qt 进程没有 wxApp），M2a 先接受（测试文件都是单轨），后续应在 `video_bridge` 里换掉 AskForTrackSelection。
+31. **ffms2 索引缓存目录**：`GetCacheFilename()` 用 `agi::fs::CreateDirectory`，本环境下可能 fail-fast（见坑 5）。`VideoViewModel::openLocalPath()` 先按 `?local/ffms2cache` 用 `QDir::mkpath` 把目录建好，provider 看到的永远是已存在目录；`AEGISUB_QT_CONFIG_DIR` 也会把 `?local` 一起关进沙箱目录。
+32. **libass blender 假定 `pitch == width * 4`**：`SubtitlesProvider::DrawSubtitles()` 直接用 `frame.data.data()` 和 `width*4` 当 stride，忽略 `VideoFrame::pitch`。ffms2 的 BGRA 输出可能带行 padding，所以 `VideoBridge::DecodeFrame()` 必须在调 draw **前**重排成紧凑缓冲（不能改原文件）。
+33. **libass 会把叠加像素的 alpha 写成 0**：转 `QImage::Format_ARGB32` 时若原样保留，`QPainter` 会把字幕区域当透明，预览里出现「黑洞」。`VideoViewModel::renderCurrentFrame()` 逐像素把 alpha 置 `0xFF`。
+34. **命令行打开的视频必须在 `engine.load()` 之后**：`VideoViewModel::openLocalPath()` 会同步取第一帧并发 `frameReady`；若在 QML 引擎加载前打开，`VideoPanel` 还没订阅信号，视频区会一直黑到下一次帧变化。`main.cpp` 把 `--video` 的处理挪到 `engine.load()` + `rootObjects` 检查之后。
+35. **本机部署的 Material ToolTip 会打 QML 警告**：视频面板按钮挂了 `ToolTip.visible: hovered` 后，首次 hover 会打印 `QQmlComponent: Component is not ready`（部署目录的 ToolTip 组件加载失败，但不影响功能）。M2a 直接把 ToolTip 去掉，保持 stderr 干净；要恢复提示需先补齐/排查部署的 Qt Quick Controls 文件。
 
 ## 6. 已知限制（下一步工作）
 
@@ -178,11 +201,13 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 - **没有最近文件列表 / 另存时的编码选择器**（当前保存固定 UTF-8，打开时自动检测）。
 - **未保存确认框**：`Save` 分支里如果用户取消了「另存为」系统对话框，原动作（New/Open/退出）会停住而不是继续/中止；没有「稍后再说」以外的记忆。
 - **只做了 Backup 一个首选项页**、Properties 只做了 3 个字段（标题是每次按键提交，靠 1000ms 合并成一步）。
+- **视频预览（Stage 10A）限制**：还没有音频播放/音频波形（M2b）；索引视频与构建 libass 字体缓存走同步版 `QtBackgroundRunner`，**首次打开会短暂卡住 UI**（没有进度对话框/取消）；多视频轨文件仍会走 `av_qt_core` 里原样编译的 wx 单选对话框，Qt 进程没有 wxApp，遇到这类文件可能异常（后续要在 `video_bridge` 里替换成 Qt 选择）；帧解码在 GUI 线程同步完成，4K/高码率播放可能掉帧；没有 DAR 非等比拉伸、缩放/裁切、旋转显示（旋转/翻转由原 ffms provider 处理）；Dummy 视频是固定棋盘格，不随时间变化（用于验证字幕叠加而不是动态画面）；`Open Video...` 的 Windows 原生文件对话框只验证了接线（真实视频路径用 `--video` 验证）。
+- **视频/字幕状态**：`VideoViewModel` 只在有视频时维护 libass track；关闭视频后不会保留最后一帧；`Sync` 勾选时切行会强制 seek（播放中不 seek），没有 Aegisub 的“自动滚动”与“按帧编辑”联动。
 - **bestsource** 在本机构建中被禁用（子模块 `libp2p` 在 bitbucket 需要认证），视频源只有 ffms2。
 
 ## 7. 验证方式
 
-- 编译：`.build-tools\build.bat aegisub-qt`（EXIT 0）、`.build-tools\build.bat`（wx 回归 EXIT 0）。本机 DSH 沙箱里改用 `bash .build-tools/build_ninja.sh [target]`（见 §4），Stage 7 / 8A 实测 `aegisub-qt` 与全量（wx + qt）均 EXIT 0。
+- 编译：`.build-tools\build.bat aegisub-qt`（EXIT 0）、`.build-tools\build.bat`（wx 回归 EXIT 0）。本机 DSH 沙箱里改用 `bash .build-tools/build_ninja.sh [target]`（见 §4），Stage 7 / 8A / 10A 实测 `aegisub-qt` 与全量（wx + qt）均 EXIT 0。
 - 运行验证用 UI Automation + `PrintWindow` 截取窗口（不抓桌面），已确认：
   - About：版本/版权/简体中文译员名单；
   - Preferences：开关写回 `agi::Options` 并落盘 `config.json`；
@@ -234,3 +259,13 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
     - `SplitView` 可拖拽（实测网格 457→409、EditBox 175→223，且不低于 160/150）；状态栏 `5 lines` → `5 lines | 3 selected` → `6 lines`，右侧 `utf-8 | Aegisub <版本>`；
     - 回归（文本编辑/撤销、行操作、查找替换、未保存确认框）正常，stderr 无 QML 警告/报错。
     - **「偶发静默退出」的排查结论**：不是应用崩溃，而是**两套自动化脚本按进程名互杀**（旧 `lib.ps1` 的 `Start-App()` 用 `Get-Process -Name aegisub-qt | Stop-Process -Force` 做全局清理，且两个测试同时在跑）。改为按 PID 清理后串行复跑 30 轮：`ExitCode` 全为 0、无 PREMATURE_EXIT、事件日志无 `Application Error`/WER、无按键被误触到窗口关闭按钮。
+  - Stage 10A（M2a 视频预览，脚本/截图在 `.build-tools/stage10a/`，不入库；素材 = `test_stage6_input.ass` + 自制 640×360 / 24fps 未压缩 AVI）：
+    - 构建：`bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe` 与全量 `bash .build-tools/build_ninja.sh` 均 **EXIT 0**（`aegisub-qt.exe` 与 `aegisub.exe` 都链接成功）。
+    - 无视频启动：布局与 M1 完全一致（`s1_m1_layout.png`）；`Video → Use Dummy Video` 后视频区从隐藏展开为上方约 300px（`s2_dummy_open.png`），按脚本 `PlayResX/Y` 打开 Dummy 1280×720/23.976fps 棋盘格，libass 实时渲染第 1 行（`Title` 样式黄字），`Frame 37 / 36000`、`0:00:01.50`；
+    - 点第 2 行（`Default` 中文行，`0:00:02.50`）→ 自动 seek 到 `Frame 61 / 36000`、`0:00:02.50`，画面渲染「第二行：QML 网格与编辑框」（`s3_row2.png`）；
+    - 正文改成 `live_edit`（自动化用 UI Automation `ValuePattern.SetValue`，绕开本机 IME 把 ASCII 吞成拼音组合的问题，见坑 11）→ 网格第 2 行 / EditBox / **视频上的字幕**同时变化（`s4_edit.png`）；`Edit → Undo` 后三者一起回退到中文原文、标题 `*` 消失（`s6_undo.png`）；
+    - 单帧 `▶`×2 → `Frame 61→63`、时间 `0:00:02.59`（`s7_step.png`）；`Play` 约 1.3s → `Frame 94 / 0:00:03.88`、按钮变 `Pause`（`s8_playing.png`）；点时间轴中段 → `Frame 16590 / 36000`、`0:11:31.86`（`s10_slider.png`）；
+    - `Video → Close Video` → 视频区塌缩、界面恢复 M1 布局（`s11_closed.png`）；再开 Dummy 后关窗 → 进程干净退出（bash `wait` 得 `APP_EXIT=0`，stderr 无 QML 警告）；
+    - 真实 ffms2 路径：`aegisub-qt test_stage6_input.ass --video test_video.avi` → 打开自制 640×360/24fps AVI（首次索引写入 `?local/ffms2cache/*.ffindex`），首帧即有画面 + `Title` 字幕叠加（`r1_open.png`），切第 2 行后画面进度与字幕同步（`r2_row2.png`）；
+    - 错误路径：`--video bogus_video.mp4`（把 ASS 改名成 mp4）→ stderr 输出 `Failed to open video ... "no video tracks found"`，窗口正常、视频区保持隐藏（`e1_bad_video.png`），不崩溃；
+    - 回归：行操作、查找替换、样式管理器、未保存确认框等 M1 功能不受影响（视频面板 `visible: videoVM.hasVideo`，无视频时 SplitView 完全折叠）。

@@ -9,5 +9,6 @@
     <file>SearchDialog.qml</file>
     <file>StylesWindow.qml</file>
     <file>ShortcutMenuItem.qml</file>
+    <file>VideoPanel.qml</file>
   </qresource>
 </RCC>

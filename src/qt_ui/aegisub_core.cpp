@@ -127,6 +127,10 @@ bool InitializeCore(QString *error) {
                 return fail(QStringLiteral("Could not create the user config directory: ") + user_dir);
 
             config::path->SetToken("?user", agi::fs::path(user_dir.toStdWString()));
+            // Sandboxed runs must not write outside the override directory:
+            // ffms2 keeps its index cache under ?local (see VideoViewModel).
+            if (!override_dir.isEmpty())
+                config::path->SetToken("?local", agi::fs::path(user_dir.toStdWString()));
         }
 
         const std::string defaults = readTextFile(app_dir.filePath(QStringLiteral("default_config.json")));
