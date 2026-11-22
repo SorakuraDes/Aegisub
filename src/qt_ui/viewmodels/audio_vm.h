@@ -66,10 +66,19 @@ public:
 
     Q_INVOKABLE bool openAudio(const QUrl &url);
     Q_INVOKABLE bool openLocalPath(const QString &path);
+    /// Same as openLocalPath(), but for the video view model's automatic audio
+    /// track loading: an already-open audio file is left alone and failures stay
+    /// silent (no error banner) because videos without an audio track are a
+    /// perfectly normal case.
+    Q_INVOKABLE bool openLocalPathQuiet(const QString &path);
     Q_INVOKABLE bool openDummyAudio();
     Q_INVOKABLE void closeAudio();
 
     Q_INVOKABLE void playSelection();
+    /// Play from `start_ms` to the end of the audio stream. Used by the video
+    /// transport so the audio clock drives the video frames. Returns false (and
+    /// leaves the player stopped) when playback could not be started.
+    Q_INVOKABLE bool playFrom(int start_ms);
     Q_INVOKABLE void stop();
     Q_INVOKABLE void zoomBy(double factor);
     Q_INVOKABLE void scrollByMs(int delta_ms);
@@ -96,6 +105,10 @@ public:
 
 signals:
     void audioChanged();
+    /// "Play Line" (selection playback) started. The video view model listens to
+    /// this so an independent line playback always wins over a video playback
+    /// instead of the two transports fighting over the audio device.
+    void linePlaybackStarted();
     void playingChanged();
     void playbackTimeChanged();
     void viewChanged();
@@ -130,6 +143,8 @@ private:
     int viewport_width_px_ = 800;
     int playback_time_ms_ = 0;
     bool playing_ = false;
+    /// True while playSelection() runs (Play Line), false for playFrom().
+    bool playing_selection_ = false;
     double volume_ = 1.0;
 
     QTimer playback_timer_;

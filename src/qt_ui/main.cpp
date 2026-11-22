@@ -14,6 +14,7 @@
 #include "viewmodels/preferences_vm.h"
 #include "viewmodels/properties_vm.h"
 #include "viewmodels/search_vm.h"
+#include "viewmodels/shift_times_vm.h"
 #include "viewmodels/styles_vm.h"
 #include "viewmodels/subtitle_grid_model.h"
 #include "viewmodels/translation_service.h"
@@ -131,6 +132,56 @@ private:
     EditBoxViewModel *editBox_;
 };
 
+/// Routes Ctrl+S / Ctrl+Shift+S to the QML window.
+///
+/// Registering both as QML `Shortcut`s does not work: Qt's shortcut matcher
+/// treats Ctrl+S and Ctrl+Shift+S as an ambiguous pair for the same key (the
+/// Shift modifier is not distinguishing for letter keys), so neither fires.
+/// An application-level filter accepts the ShortcutOverride (suppressing the
+/// QML shortcuts entirely) and then dispatches the two cases itself.
+class FileShortcutFilter final : public QObject {
+public:
+    explicit FileShortcutFilter(QObject *rootObject, QObject *parent = nullptr)
+    : QObject(parent)
+    , root_(rootObject)
+    {
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        Q_UNUSED(watched);
+
+        const QEvent::Type type = event->type();
+        if (type != QEvent::ShortcutOverride && type != QEvent::KeyPress)
+            return false;
+
+        auto *key_event = static_cast<QKeyEvent *>(event);
+        if (key_event->key() != Qt::Key_S)
+            return false;
+
+        const Qt::KeyboardModifiers mods = key_event->modifiers();
+        if (mods != Qt::ControlModifier && mods != (Qt::ControlModifier | Qt::ShiftModifier))
+            return false;
+
+        if (type == QEvent::ShortcutOverride) {
+            event->accept();
+            return true;
+        }
+
+        if (!key_event->isAutoRepeat() && root_) {
+            const char *method = mods.testFlag(Qt::ShiftModifier) ? "openSaveAsDialog"
+                                                                  : "saveDocument";
+            if (!QMetaObject::invokeMethod(root_, method, Qt::DirectConnection))
+                qWarning() << "aegisub-qt: Main.qml has no" << method << "function";
+        }
+        event->accept();
+        return true;
+    }
+
+private:
+    QObject *root_;
+};
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -172,6 +223,10 @@ int main(int argc, char *argv[]) {
     StylesViewModel stylesVM(&script, &undoManager);
     VideoViewModel videoVM(&script, &gridModel, &undoManager);
     AudioViewModel audioVM(&script, &gridModel, &undoManager);
+    // A/V synchronised playback: the video transport starts the audio player at
+    // the current video position and then follows the audio clock.
+    videoVM.setAudioViewModel(&audioVM);
+    ShiftTimesViewModel shiftTimesVM(&script, &gridModel, &videoVM);
 
     // New/Open does not go through AssFile::Commit, so the style index has to
     // be told about a fresh document explicitly.
@@ -209,6 +264,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("stylesVM", &stylesVM);
     engine.rootContext()->setContextProperty("videoVM", &videoVM);
     engine.rootContext()->setContextProperty("audioVM", &audioVM);
+    engine.rootContext()->setContextProperty("shiftTimesVM", &shiftTimesVM);
 
     // Command line: an optional subtitle file plus "--video <path>" and
     // "--audio <path>", which lets the automated checks open everything at once.
@@ -243,6 +299,12 @@ int main(int argc, char *argv[]) {
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;
+
+    // Ctrl+S / Ctrl+Shift+S must be dispatched here; see FileShortcutFilter.
+    if (QObject *root_object = engine.rootObjects().first()) {
+        auto *file_filter = new FileShortcutFilter(root_object, &app);
+        app.installEventFilter(file_filter);
+    }
 
     // Open the command-line media only after QML is up: VideoPanel would miss
     // the frameReady() signal emitted during a pre-engine open and show a black

@@ -15,6 +15,7 @@
 
 class AssDialogue;
 class AssFile;
+class AudioViewModel;
 class SubtitleGridModel;
 class UndoManager;
 
@@ -71,6 +72,18 @@ public:
     bool autoSeekToActiveLine() const;
     void setAutoSeekToActiveLine(bool enabled);
 
+    /// Connect the audio view model for A/V-synchronised playback.
+    ///
+    /// Deliberately not a Q_INVOKABLE: main.cpp owns both view models and calls
+    /// this once after constructing them.
+    void setAudioViewModel(AudioViewModel *audio);
+
+    /// Frame/time mapping used by the Shift Times frame mode. `end` selects the
+    /// agi::vfr::END semantics (last frame on which a line ending at that time
+    /// is visible / a time inside that frame) instead of the START semantics.
+    Q_INVOKABLE int frameAtTimeMs(int ms, bool end) const;
+    Q_INVOKABLE int timeAtFrameMs(int frame, bool end) const;
+
     /// Open a video file picked by QML's FileDialog.
     Q_INVOKABLE bool openVideo(const QUrl &url);
     /// Open a video file by local path (ffms2 formats).
@@ -114,6 +127,10 @@ private:
     void onFileCommitted(int type, const AssDialogue *single_line);
     void onRestored();
     void onActiveRowChanged();
+    /// The audio file was closed/opened: a synced playback cannot continue.
+    void onAudioAvailabilityChanged();
+    /// "Play Line" started: pause the video instead of fighting for the device.
+    void onAudioLinePlaybackStarted();
     void scheduleSubtitleReload();
     void reloadSubtitlesAndRedraw();
     /// Start time of the grid's active line in milliseconds, or -1.
@@ -122,6 +139,7 @@ private:
     AssFile *file_;
     SubtitleGridModel *grid_model_;
     UndoManager *undo_manager_;
+    AudioViewModel *audio_vm_ = nullptr;
     std::unique_ptr<aegisub_qt::VideoBridge> bridge_;
 
     QString video_name_;
@@ -130,6 +148,9 @@ private:
     int current_frame_ = -1;
     bool playing_ = false;
     bool auto_seek_ = true;
+    /// True while playback is clocked by the audio player instead of the wall
+    /// clock (audio track open and playFrom() succeeded).
+    bool audio_sync_ = false;
 
     QTimer playback_timer_;
     QElapsedTimer playback_elapsed_;

@@ -116,6 +116,40 @@ bool AudioViewModel::openLocalPath(const QString &path) {
     return true;
 }
 
+bool AudioViewModel::openLocalPathQuiet(const QString &path) {
+    // Never replace an explicitly opened audio file, and stay silent on failure:
+    // a video without an audio track is a perfectly normal case (the video view
+    // model calls this for every real video it opens).
+    if (hasAudio())
+        return false;
+
+    if (path.isEmpty() || !QFileInfo(path).isFile())
+        return false;
+
+    stopPlayback();
+
+    std::string error;
+    if (!bridge_.OpenFile(path.toUtf8().toStdString(), &error)) {
+        // AudioBridge::OpenFile() closes itself on failure. Leave last_error_
+        // untouched so the failed auto-load does not raise the error banner.
+        LOG_D("qt/audio") << "automatic audio load skipped:" << error;
+        return false;
+    }
+
+    audio_name_ = QFileInfo(path).fileName();
+    view_start_ms_ = 0;
+    playback_time_ms_ = 0;
+    refreshActiveTimes();
+    centerOnActiveLine();
+
+    emit audioChanged();
+    emit playerStatusChanged();
+    emit activeTimesChanged();
+    emit viewChanged();
+    emit playbackTimeChanged();
+    return true;
+}
+
 bool AudioViewModel::openDummyAudio() {
     stopPlayback();
 
@@ -159,6 +193,10 @@ void AudioViewModel::playSelection() {
         return;
 
     stopPlayback();
+    // Tell the video view model that an independent (Play Line) playback is
+    // taking over the audio device; it pauses its own transport instead of the
+    // two of them interleaving.
+    emit linePlaybackStarted();
     refreshActiveTimes();
 
     int start_ms = active_start_ms_;
@@ -181,12 +219,43 @@ void AudioViewModel::playSelection() {
     }
 
     playing_ = true;
+    playing_selection_ = true;
     playback_time_ms_ = start_ms;
     playback_timer_.start();
     emit playingChanged();
     emit playbackTimeChanged();
     // PlayRange may have switched to the silent fallback.
     emit playerStatusChanged();
+}
+
+bool AudioViewModel::playFrom(int start_ms) {
+    if (!hasAudio())
+        return false;
+
+    stopPlayback();
+
+    const int duration = durationMs();
+    if (duration <= 0)
+        return false;
+
+    const int start = std::clamp(start_ms, 0, std::max(0, duration - 1));
+
+    std::string error;
+    if (!bridge_.PlayRange(msToSample(start), msToSample(duration), &error)) {
+        setError(QString::fromStdString(error));
+        emit playerStatusChanged();
+        return false;
+    }
+
+    playing_ = true;
+    // Full-stream playback: the playhead is not clamped to the active line.
+    playing_selection_ = false;
+    playback_time_ms_ = start;
+    playback_timer_.start();
+    emit playingChanged();
+    emit playbackTimeChanged();
+    emit playerStatusChanged();
+    return true;
 }
 
 void AudioViewModel::stop() {
@@ -364,12 +433,17 @@ void AudioViewModel::stopPlayback() {
     bridge_.Stop();
     playback_timer_.stop();
 
+    const bool was_selection = playing_selection_;
+    playing_selection_ = false;
+
     if (playing_) {
         playing_ = false;
         emit playingChanged();
     }
 
-    if (hasAudio()) {
+    // Play Line parks the playhead at the line start for the next attempt;
+    // full-stream playback (video sync) just stops where it is.
+    if (hasAudio() && was_selection) {
         playback_time_ms_ = std::max(active_start_ms_, playback_time_ms_);
         emit playbackTimeChanged();
     }
@@ -380,7 +454,7 @@ void AudioViewModel::onPlaybackTick() {
         return;
 
     if (!bridge_.IsPlaying()) {
-        playback_time_ms_ = active_end_ms_;
+        playback_time_ms_ = playing_selection_ ? active_end_ms_ : durationMs();
         emit playbackTimeChanged();
         stopPlayback();
         return;
@@ -388,7 +462,10 @@ void AudioViewModel::onPlaybackTick() {
 
     const int64_t sample = bridge_.CurrentSample();
     int ms = sampleToMs(sample);
-    ms = std::clamp(ms, active_start_ms_, std::max(active_start_ms_, active_end_ms_));
+    if (playing_selection_)
+        ms = std::clamp(ms, active_start_ms_, std::max(active_start_ms_, active_end_ms_));
+    else
+        ms = std::clamp(ms, 0, std::max(0, durationMs()));
     if (ms != playback_time_ms_) {
         playback_time_ms_ = ms;
         emit playbackTimeChanged();

@@ -8,6 +8,7 @@
     <file>PropertiesWindow.qml</file>
     <file>SearchDialog.qml</file>
     <file>StylesWindow.qml</file>
+    <file>ShiftTimesDialog.qml</file>
     <file>ShortcutMenuItem.qml</file>
     <file>VideoPanel.qml</file>
     <file>AudioPanel.qml</file>

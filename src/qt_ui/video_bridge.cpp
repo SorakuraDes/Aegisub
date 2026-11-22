@@ -172,6 +172,18 @@ int VideoBridge::TimeAtFrame(int frame) const {
     return impl_->provider->GetFPS().TimeAtFrame(frame < 0 ? 0 : (frame > last ? last : frame));
 }
 
+int VideoBridge::TimeAtFrameStart(int frame) const {
+    if (!impl_->provider)
+        return 0;
+    return impl_->provider->GetFPS().TimeAtFrame(frame, agi::vfr::START);
+}
+
+int VideoBridge::TimeAtFrameEnd(int frame) const {
+    if (!impl_->provider)
+        return 0;
+    return impl_->provider->GetFPS().TimeAtFrame(frame, agi::vfr::END);
+}
+
 int VideoBridge::FrameAtTime(int ms) const {
     if (!impl_->provider)
         return 0;
@@ -182,6 +194,12 @@ int VideoBridge::FrameAtTimeStart(int ms) const {
     if (!impl_->provider)
         return 0;
     return impl_->provider->GetFPS().FrameAtTime(ms, agi::vfr::START);
+}
+
+int VideoBridge::FrameAtTimeEnd(int ms) const {
+    if (!impl_->provider)
+        return 0;
+    return impl_->provider->GetFPS().FrameAtTime(ms, agi::vfr::END);
 }
 
 void VideoBridge::LoadSubtitles(AssFile *file) {

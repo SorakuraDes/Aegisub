@@ -1,6 +1,8 @@
 // Must come before any Qt header: agi::signal (via ass_file.h) has members
 // named `slots`, and Qt defines `signals`/`slots` as macros.
 #include "../../ass_file.h"
+// For the blank default line added when a .srt has no cues at all.
+#include "../../ass_dialogue.h"
 
 #include <boost/filesystem/path.hpp>
 
@@ -9,6 +11,7 @@
 #include "undo_manager.h"
 
 #include "../subtitle_format_ass.h"
+#include "../subtitle_format_srt.h"
 
 #include <libaegisub/charset.h>
 #include <libaegisub/exception.h>
@@ -28,6 +31,12 @@ agi::fs::path toPath(const QString &path) {
 #else
     return agi::fs::path(path.toStdString());
 #endif
+}
+
+/// SubRip import/export is selected purely by the file name suffix; matching is
+/// case-insensitive so `Movie.SRT` opens in the SRT reader too.
+bool isSrtPath(const QString &path) {
+    return QFileInfo(path).suffix().compare("srt", Qt::CaseInsensitive) == 0;
 }
 
 } // namespace
@@ -149,8 +158,23 @@ bool DocumentViewModel::loadFromPath(const QString &path) {
         // Parse into a temporary file first; only swap it in on success so a
         // broken file can never destroy the currently open document.
         AssFile tmp;
-        AssSubtitleFormat format;
-        format.ReadFile(&tmp, native, agi::vfr::Framerate(), encoding);
+        if (isSrtPath(path)) {
+            // SubRip has no [Script Info]/[V4+ Styles]: ReadFile installs the
+            // default ones (plus the SRT default style catalog) before pushing
+            // the parsed cues, so the rest of the pipeline is identical to ASS.
+            SRTSubtitleFormat format;
+            format.ReadFile(&tmp, native, agi::vfr::Framerate(), encoding);
+            // An empty .srt would leave a zero-row document. Add the usual blank
+            // default line instead of calling LoadDefault(true) again: that
+            // would append a second copy of every [Script Info] entry and of the
+            // `Default` style, which ReadFile has already installed above.
+            if (tmp.Events.empty())
+                tmp.Events.push_back(*new AssDialogue);
+        }
+        else {
+            AssSubtitleFormat format;
+            format.ReadFile(&tmp, native, agi::vfr::Framerate(), encoding);
+        }
 
         file_->swap(tmp);
         setFilePath(path);
@@ -190,14 +214,23 @@ bool DocumentViewModel::saveToPath(const QString &path) {
     if (!file_)
         return false;
     try {
-        AssSubtitleFormat format;
-        format.WriteFile(file_, toPath(path), agi::vfr::Framerate(), "UTF-8");
+        if (isSrtPath(path)) {
+            // The SRT writer converts tags, drops comments/empty lines and
+            // splits/merges overlapping and identical lines itself; only plain
+            // UTF-8 output is supported (no encoding picker yet).
+            SRTSubtitleFormat format;
+            format.WriteFile(file_, toPath(path), agi::vfr::Framerate(), "UTF-8");
+        }
+        else {
+            AssSubtitleFormat format;
+            format.WriteFile(file_, toPath(path), agi::vfr::Framerate(), "UTF-8");
+        }
         setFilePath(path);
         // The undo position at save time becomes the "clean" reference, so the
         // title bar drops the '*' and undoing back here clears it again.
         if (undoManager_)
             undoManager_->markSaved();
-        // Saving always writes UTF-8 (see AssSubtitleFormat::WriteFile above).
+        // Saving always writes UTF-8 (both format writers are called with it).
         setEncoding(QStringLiteral("UTF-8"));
         clearErrorIfNeeded();
         qInfo() << "[document] saved" << path;

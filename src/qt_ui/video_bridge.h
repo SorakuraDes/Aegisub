@@ -52,11 +52,20 @@ public:
 
     /// Start time of `frame` in milliseconds.
     int TimeAtFrame(int frame) const;
+    /// Time inside the frame range that makes a line starting on `frame`
+    /// actually start there (agi::vfr::START semantics).
+    int TimeAtFrameStart(int frame) const;
+    /// Time inside the frame range that makes a line ending on `frame`
+    /// actually end there (agi::vfr::END semantics).
+    int TimeAtFrameEnd(int frame) const;
     /// Frame visible at `ms`.
     int FrameAtTime(int ms) const;
     /// First frame on which a line starting at `ms` is visible (agi::vfr::START
     /// semantics), used when jumping to the active subtitle line.
     int FrameAtTimeStart(int ms) const;
+    /// Last frame on which a line ending at `ms` is visible (agi::vfr::END
+    /// semantics), used by the Shift Times frame mode.
+    int FrameAtTimeEnd(int ms) const;
 
     /// Replace the libass track with the contents of `file`. Called after every
     /// edit so the preview always shows the current script.

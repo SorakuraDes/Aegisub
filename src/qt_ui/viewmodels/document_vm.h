@@ -9,7 +9,8 @@ class SubtitleGridModel;
 class UndoManager;
 
 /// Owns the open document: current file path, dirty state, and the actual
-/// AssFile I/O through the original AssSubtitleFormat reader/writer.
+/// AssFile I/O through the original subtitle format readers/writers: ASS
+/// (AssSubtitleFormat) by default, SubRip (SRTSubtitleFormat) for `.srt` paths.
 ///
 /// The dirty flag is not tracked here any more: it is simply
 /// UndoManager::isModified (current undo position != position at last save), so

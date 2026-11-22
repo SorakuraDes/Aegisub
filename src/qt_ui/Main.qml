@@ -18,6 +18,7 @@ ApplicationWindow {
     property var propertiesWindow: null
     property var searchWindow: null
     property var stylesWindow: null
+    property var shiftTimesWindow: null
 
     // Pending File-menu action while the unsaved-changes dialog is up, and the
     // action to resume once a (possibly Save As) save finished.
@@ -100,6 +101,21 @@ ApplicationWindow {
         stylesWindow.requestActivate()
     }
 
+    // Non-modal Shift Times window (one instance, reopened from Subtitle menu).
+    function openShiftTimes() {
+        if (shiftTimesWindow === null) {
+            var component = Qt.createComponent("qrc:/ShiftTimesDialog.qml")
+            if (component.status !== Component.Ready) {
+                console.error("Failed to load ShiftTimesDialog.qml", component.errorString())
+                return
+            }
+            shiftTimesWindow = component.createObject(null)
+        }
+        shiftTimesWindow.show()
+        shiftTimesWindow.raise()
+        shiftTimesWindow.requestActivate()
+    }
+
     function closeChildWindows() {
         if (searchWindow !== null) {
             searchWindow.close()
@@ -108,6 +124,10 @@ ApplicationWindow {
         if (stylesWindow !== null) {
             stylesWindow.close()
             stylesWindow = null
+        }
+        if (shiftTimesWindow !== null) {
+            shiftTimesWindow.close()
+            shiftTimesWindow = null
         }
         if (aboutWindow !== null) {
             aboutWindow.close()
@@ -130,6 +150,12 @@ ApplicationWindow {
             saveAsDialog.open()
         else
             documentVM.saveFile()
+    }
+
+    // Called by main.cpp's FileShortcutFilter (Ctrl+Shift+S; see the comment
+    // there for why this is not a QML Shortcut).
+    function openSaveAsDialog() {
+        saveAsDialog.open()
     }
 
     // Run a File-menu action. "quit" is routed through close() so the window
@@ -197,11 +223,13 @@ ApplicationWindow {
     // Ctrl+Z / Ctrl+Y are handled by main.cpp's key filter.
     Shortcut { sequence: StandardKey.New; onActivated: mainWindow.requestAction("new") }
     Shortcut { sequence: StandardKey.Open; onActivated: mainWindow.requestAction("open") }
-    Shortcut { sequence: StandardKey.Save; onActivated: mainWindow.saveDocument() }
-    Shortcut { sequence: StandardKey.SaveAs; onActivated: saveAsDialog.open() }
+    // Ctrl+S / Ctrl+Shift+S are handled by main.cpp's FileShortcutFilter (the
+    // QML Shortcut matcher cannot tell them apart for letter keys).
     Shortcut { sequence: StandardKey.Quit; onActivated: mainWindow.requestAction("quit") }
     Shortcut { sequence: StandardKey.Find; onActivated: mainWindow.openSearch(false) }
     Shortcut { sequence: StandardKey.Replace; onActivated: mainWindow.openSearch(true) }
+    // Shift Times (Aegisub's subtitle/shift times; Ctrl+I matches the wx frontend).
+    Shortcut { sequence: "Ctrl+I"; onActivated: mainWindow.openShiftTimes() }
 
     // Row actions, kept away from the text editors above.
     Shortcut {
@@ -366,6 +394,12 @@ ApplicationWindow {
             }
             MenuSeparator {}
             ShortcutMenuItem {
+                text: i18n.t("Shift Times...")
+                shortcutText: "Ctrl+I"
+                onTriggered: mainWindow.openShiftTimes()
+            }
+            MenuSeparator {}
+            ShortcutMenuItem {
                 text: i18n.t("Styles Manager...")
                 onTriggered: mainWindow.openStyles()
             }
@@ -457,7 +491,10 @@ ApplicationWindow {
     FileDialog {
         id: openDialog
         title: "Open subtitle file"
-        nameFilters: ["ASS subtitles (*.ass *.ssa)", "All files (*)"]
+        nameFilters: ["Subtitle files (*.ass *.ssa *.srt)",
+                      "ASS subtitles (*.ass *.ssa)",
+                      "SRT subtitles (*.srt)",
+                      "All files (*)"]
         fileMode: FileDialog.OpenFile
         onAccepted: documentVM.openFile(selectedFile)
     }
@@ -465,7 +502,10 @@ ApplicationWindow {
     FileDialog {
         id: saveAsDialog
         title: "Save subtitle file as"
-        nameFilters: ["ASS subtitles (*.ass *.ssa)", "All files (*)"]
+        nameFilters: ["Subtitle files (*.ass *.ssa *.srt)",
+                      "ASS subtitles (*.ass *.ssa)",
+                      "SRT subtitles (*.srt)",
+                      "All files (*)"]
         fileMode: FileDialog.SaveFile
         defaultSuffix: "ass"
         onAccepted: {

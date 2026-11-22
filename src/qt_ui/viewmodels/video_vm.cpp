@@ -14,6 +14,8 @@
 
 #include "video_vm.h"
 
+#include "audio_vm.h"
+
 #include "../video_bridge.h"
 
 #include <libaegisub/ass/time.h>
@@ -145,6 +147,13 @@ bool VideoViewModel::openLocalPath(const QString &path) {
 
     file_path_ = info.absoluteFilePath();
     onVideoOpened(info.fileName());
+
+    // A real video usually carries an audio track: load it into the audio panel
+    // as well unless the user already opened something there. A video without an
+    // audio track is a normal case, so failures stay silent (no error banner).
+    if (audio_vm_ && !audio_vm_->hasAudio())
+        audio_vm_->openLocalPathQuiet(file_path_);
+
     return true;
 }
 
@@ -182,9 +191,8 @@ bool VideoViewModel::openDummyVideo(int width, int height, double fps_value, int
 }
 
 void VideoViewModel::closeVideo() {
-    const bool was_playing = playing_;
-    playing_ = false;
-    playback_timer_.stop();
+    // Also stops a synced audio playback (see stopPlayback()).
+    stopPlayback();
     subtitle_reload_timer_.stop();
 
     bridge_->Close();
@@ -197,8 +205,6 @@ void VideoViewModel::closeVideo() {
     emit videoNameChanged();
     emit videoInfoChanged();
     emit currentFrameChanged();
-    if (was_playing)
-        emit isPlayingChanged();
     emit frameReady(QImage());
 }
 
@@ -206,14 +212,13 @@ void VideoViewModel::seekFrame(int frame) {
     if (!hasVideo())
         return;
 
+    // A manual seek stops the transport on both sides of an A/V sync; a half
+    // stopped pair (video paused while the audio still runs) must not happen.
+    if (playing_)
+        stopPlayback();
+
     const int last = frameCount() - 1;
     const int target = std::clamp(frame, 0, last);
-
-    if (playing_) {
-        // Keep playback running from the new position.
-        playback_start_ms_ = bridge_->TimeAtFrame(target);
-        playback_elapsed_.restart();
-    }
 
     setCurrentFrame(target, true);
 }
@@ -256,6 +261,12 @@ void VideoViewModel::togglePlay() {
     if (current_frame_ >= frameCount() - 1)
         seekFrame(0);
 
+    // Prefer the audio clock: when an audio track is open, start it at the
+    // current video position and let its playback position drive the frames.
+    // Long playbacks then cannot drift apart (wall-clock + decode jitter would
+    // accumulate on the video side).
+    audio_sync_ = audio_vm_ && audio_vm_->hasAudio() && audio_vm_->playFrom(currentTimeMs());
+
     playing_ = true;
     playback_start_ms_ = currentTimeMs();
     playback_elapsed_.start();
@@ -263,6 +274,35 @@ void VideoViewModel::togglePlay() {
     const double frames_per_second = fps() > 0.0 ? fps() : 24.0;
     playback_timer_.start(std::max(1, int(1000.0 / frames_per_second + 0.5)));
     emit isPlayingChanged();
+}
+
+void VideoViewModel::setAudioViewModel(AudioViewModel *audio) {
+    if (audio_vm_ == audio)
+        return;
+
+    if (audio_vm_)
+        disconnect(audio_vm_, nullptr, this, nullptr);
+
+    audio_vm_ = audio;
+    if (!audio_vm_)
+        return;
+
+    connect(audio_vm_, &AudioViewModel::audioChanged,
+            this, &VideoViewModel::onAudioAvailabilityChanged);
+    connect(audio_vm_, &AudioViewModel::linePlaybackStarted,
+            this, &VideoViewModel::onAudioLinePlaybackStarted);
+}
+
+int VideoViewModel::frameAtTimeMs(int ms, bool end) const {
+    if (!hasVideo())
+        return 0;
+    return end ? bridge_->FrameAtTimeEnd(ms) : bridge_->FrameAtTimeStart(ms);
+}
+
+int VideoViewModel::timeAtFrameMs(int frame, bool end) const {
+    if (!hasVideo())
+        return 0;
+    return end ? bridge_->TimeAtFrameEnd(frame) : bridge_->TimeAtFrameStart(frame);
 }
 
 void VideoViewModel::handleDocumentReload() {
@@ -376,6 +416,11 @@ void VideoViewModel::stopPlayback() {
 
     playing_ = false;
     playback_timer_.stop();
+    // A synced audio playback belongs to this transport: stop it as well so the
+    // sound never keeps going while the picture is paused/stopped.
+    if (audio_sync_ && audio_vm_)
+        audio_vm_->stop();
+    audio_sync_ = false;
     emit isPlayingChanged();
 }
 
@@ -383,9 +428,22 @@ void VideoViewModel::onPlaybackTick() {
     if (!playing_ || !hasVideo())
         return;
 
-    // Wall-clock driven: a late timer tick skips a frame instead of slowing the
-    // video down.
-    const int target_ms = playback_start_ms_ + int(playback_elapsed_.elapsed());
+    int target_ms = 0;
+
+    if (audio_sync_ && audio_vm_) {
+        // The audio player is the master clock. If it stopped on its own (end of
+        // the stream, Play Line, Close Audio) the video stops where it is.
+        if (!audio_vm_->isPlaying()) {
+            stopPlayback();
+            return;
+        }
+        target_ms = audio_vm_->playbackTimeMs();
+    } else {
+        // Wall-clock driven: a late timer tick skips a frame instead of slowing
+        // the video down.
+        target_ms = playback_start_ms_ + int(playback_elapsed_.elapsed());
+    }
+
     const int last = frameCount() - 1;
     const int frame = bridge_->FrameAtTime(target_ms);
 
@@ -396,6 +454,20 @@ void VideoViewModel::onPlaybackTick() {
     }
 
     setCurrentFrame(frame, true);
+}
+
+void VideoViewModel::onAudioAvailabilityChanged() {
+    // Close Audio while a synced playback is running: there is no clock left to
+    // follow, so stop cleanly instead of switching clocks mid-playback.
+    if (playing_ && audio_sync_ && (!audio_vm_ || !audio_vm_->hasAudio()))
+        stopPlayback();
+}
+
+void VideoViewModel::onAudioLinePlaybackStarted() {
+    // Play Line takes over the audio device: pause the video transport instead
+    // of letting the two fight over it.
+    if (playing_)
+        stopPlayback();
 }
 
 int VideoViewModel::activeLineStartMs() const {
