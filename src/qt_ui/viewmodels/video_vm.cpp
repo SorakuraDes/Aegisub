@@ -86,6 +86,7 @@ VideoViewModel::~VideoViewModel() {
 
 bool VideoViewModel::hasVideo() const { return bridge_->IsOpen(); }
 QString VideoViewModel::videoName() const { return video_name_; }
+QString VideoViewModel::filePath() const { return file_path_; }
 int VideoViewModel::frameCount() const { return bridge_->FrameCount(); }
 int VideoViewModel::currentFrame() const { return current_frame_; }
 bool VideoViewModel::isPlaying() const { return playing_; }
@@ -142,6 +143,7 @@ bool VideoViewModel::openLocalPath(const QString &path) {
         return false;
     }
 
+    file_path_ = info.absoluteFilePath();
     onVideoOpened(info.fileName());
     return true;
 }
@@ -171,6 +173,7 @@ bool VideoViewModel::openDummyVideo(int width, int height, double fps_value, int
         return false;
     }
 
+    file_path_.clear();
     onVideoOpened(QStringLiteral("Dummy %1x%2 @ %3 fps")
                       .arg(resolved_width)
                       .arg(resolved_height)
@@ -187,6 +190,7 @@ void VideoViewModel::closeVideo() {
     bridge_->Close();
 
     video_name_.clear();
+    file_path_.clear();
     current_frame_ = -1;
 
     emit hasVideoChanged();

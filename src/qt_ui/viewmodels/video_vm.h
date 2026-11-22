@@ -34,6 +34,8 @@ class VideoViewModel final : public QObject {
 
     Q_PROPERTY(bool hasVideo READ hasVideo NOTIFY hasVideoChanged)
     Q_PROPERTY(QString videoName READ videoName NOTIFY videoNameChanged)
+    /// Absolute path of the real video file (empty for the dummy video).
+    Q_PROPERTY(QString filePath READ filePath NOTIFY videoNameChanged)
     Q_PROPERTY(int frameCount READ frameCount NOTIFY videoInfoChanged)
     Q_PROPERTY(int currentFrame READ currentFrame NOTIFY currentFrameChanged)
     Q_PROPERTY(int currentTimeMs READ currentTimeMs NOTIFY currentFrameChanged)
@@ -56,6 +58,7 @@ public:
 
     bool hasVideo() const;
     QString videoName() const;
+    QString filePath() const;
     int frameCount() const;
     int currentFrame() const;
     int currentTimeMs() const;
@@ -122,6 +125,7 @@ private:
     std::unique_ptr<aegisub_qt::VideoBridge> bridge_;
 
     QString video_name_;
+    QString file_path_;
     QString last_error_;
     int current_frame_ = -1;
     bool playing_ = false;

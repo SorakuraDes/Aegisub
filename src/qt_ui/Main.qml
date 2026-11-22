@@ -234,6 +234,13 @@ ApplicationWindow {
         onActivated: videoVM.seekToActiveLine()
     }
 
+    // Audio waveform: play the active line's range.
+    Shortcut {
+        sequence: "Ctrl+Space"
+        enabled: audioVM.hasAudio
+        onActivated: audioVM.playSelection()
+    }
+
     // ---- Compact desktop menu bar ----------------------------------------
 
     menuBar: MenuBar {
@@ -394,6 +401,41 @@ ApplicationWindow {
         }
 
         Menu {
+            title: "&Audio"
+            ShortcutMenuItem {
+                text: i18n.t("Open Audio...")
+                onTriggered: audioDialog.open()
+            }
+            ShortcutMenuItem {
+                text: i18n.t("Open Audio from Video")
+                enabled: videoVM.hasVideo && videoVM.filePath.length > 0
+                onTriggered: audioVM.openLocalPath(videoVM.filePath)
+            }
+            ShortcutMenuItem {
+                text: i18n.t("Use Dummy Audio")
+                onTriggered: audioVM.openDummyAudio()
+            }
+            MenuSeparator {}
+            ShortcutMenuItem {
+                text: i18n.t("Close Audio")
+                enabled: audioVM.hasAudio
+                onTriggered: audioVM.closeAudio()
+            }
+            MenuSeparator {}
+            ShortcutMenuItem {
+                text: i18n.t("Play Line")
+                shortcutText: "Ctrl+Space"
+                enabled: audioVM.hasAudio
+                onTriggered: audioVM.playSelection()
+            }
+            ShortcutMenuItem {
+                text: i18n.t("Stop")
+                enabled: audioVM.hasAudio && audioVM.isPlaying
+                onTriggered: audioVM.stop()
+            }
+        }
+
+        Menu {
             title: "&Tools"
             ShortcutMenuItem {
                 text: i18n.t("Preferences...")
@@ -441,6 +483,15 @@ ApplicationWindow {
         nameFilters: ["Video files (*.mp4 *.mkv *.avi *.webm *.mov *.ts)", "All files (*)"]
         fileMode: FileDialog.OpenFile
         onAccepted: videoVM.openVideo(selectedFile)
+    }
+
+    FileDialog {
+        id: audioDialog
+        title: "Open audio file"
+        nameFilters: ["Audio/Video files (*.wav *.flac *.mp3 *.aac *.m4a *.ogg *.opus *.mp4 *.mkv *.avi)",
+                      "All files (*)"]
+        fileMode: FileDialog.OpenFile
+        onAccepted: audioVM.openAudio(selectedFile)
     }
 
     // Material 3 style guard against losing unsaved changes.
@@ -535,9 +586,10 @@ ApplicationWindow {
             }
         }
 
-        // Desktop workspace: draggable vertical split between the video preview
-        // (only present once a video is open, so the M1 layout is unchanged
-        // otherwise), the grid and the editor.
+        // Desktop workspace: draggable vertical split. The top media row holds
+        // the video preview and the audio waveform side by side; each one fills
+        // the whole row when the other is hidden, and the row collapses
+        // completely (back to the M1 layout) when both are closed.
         SplitView {
             id: mainSplit
             Layout.fillWidth: true
@@ -549,12 +601,34 @@ ApplicationWindow {
                 color: SplitHandle.hovered ? "#3a3a3a" : "#1e1e1e"
             }
 
-            Loader {
-                id: videoPanelLoader
-                source: "qrc:/VideoPanel.qml"
-                visible: videoVM.hasVideo
+            SplitView {
+                id: mediaSplit
+                visible: videoVM.hasVideo || audioVM.hasAudio
                 SplitView.preferredHeight: 300
                 SplitView.minimumHeight: 180
+                orientation: Qt.Horizontal
+
+                handle: Rectangle {
+                    implicitWidth: 6
+                    color: SplitHandle.hovered ? "#3a3a3a" : "#1e1e1e"
+                }
+
+                Loader {
+                    id: videoPanelLoader
+                    source: "qrc:/VideoPanel.qml"
+                    visible: videoVM.hasVideo
+                    SplitView.preferredWidth: 460
+                    SplitView.minimumWidth: 320
+                    SplitView.fillWidth: !audioVM.hasAudio
+                }
+
+                Loader {
+                    id: audioPanelLoader
+                    source: "qrc:/AudioPanel.qml"
+                    visible: audioVM.hasAudio
+                    SplitView.fillWidth: true
+                    SplitView.minimumWidth: 320
+                }
             }
 
             Loader {

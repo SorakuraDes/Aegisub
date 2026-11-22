@@ -3,10 +3,12 @@
 #include "../ass_file.h"
 
 #include "aegisub_core.h"
+#include "audio_waveform_item.h"
 #include "video_bridge.h"
 #include "video_viewport_item.h"
 #include "viewmodels/about_vm.h"
 #include "viewmodels/app_info_vm.h"
+#include "viewmodels/audio_vm.h"
 #include "viewmodels/document_vm.h"
 #include "viewmodels/edit_box_vm.h"
 #include "viewmodels/preferences_vm.h"
@@ -169,6 +171,7 @@ int main(int argc, char *argv[]) {
     SearchViewModel searchVM(&script, &gridModel);
     StylesViewModel stylesVM(&script, &undoManager);
     VideoViewModel videoVM(&script, &gridModel, &undoManager);
+    AudioViewModel audioVM(&script, &gridModel, &undoManager);
 
     // New/Open does not go through AssFile::Commit, so the style index has to
     // be told about a fresh document explicitly.
@@ -177,6 +180,9 @@ int main(int argc, char *argv[]) {
     // The video preview caches a libass track, so it needs the same treatment.
     QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
                      &videoVM, &VideoViewModel::handleDocumentReload);
+    // The audio panel caches the active line to draw its red/blue lines.
+    QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
+                     &audioVM, &AudioViewModel::handleDocumentReload);
 
     UndoShortcutFilter undoFilter(&undoManager);
     app.installEventFilter(&undoFilter);
@@ -185,8 +191,9 @@ int main(int argc, char *argv[]) {
     BodyEnterFilter bodyEnterFilter(&editBoxVM);
     app.installEventFilter(&bodyEnterFilter);
 
-    // QML-only wrapper that paints the frame exposed by VideoViewModel.
+    // QML-only wrappers that paint the media view models.
     qmlRegisterType<VideoViewportItem>("Aegisub", 1, 0, "VideoViewport");
+    qmlRegisterType<AudioWaveformItem>("Aegisub", 1, 0, "AudioWaveform");
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("i18n", &i18n);
@@ -201,16 +208,22 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("searchVM", &searchVM);
     engine.rootContext()->setContextProperty("stylesVM", &stylesVM);
     engine.rootContext()->setContextProperty("videoVM", &videoVM);
+    engine.rootContext()->setContextProperty("audioVM", &audioVM);
 
-    // Command line: an optional subtitle file plus "--video <path>", which lets
-    // the automated checks open both documents and a video in one go.
+    // Command line: an optional subtitle file plus "--video <path>" and
+    // "--audio <path>", which lets the automated checks open everything at once.
     const QStringList args = QCoreApplication::arguments();
     QString startup_file;
     QString startup_video;
+    QString startup_audio;
     for (int i = 1; i < args.size(); ++i) {
         const QString &arg = args.at(i);
         if (arg == QLatin1String("--video") && i + 1 < args.size()) {
             startup_video = args.at(++i);
+            continue;
+        }
+        if (arg == QLatin1String("--audio") && i + 1 < args.size()) {
+            startup_audio = args.at(++i);
             continue;
         }
         if (arg.startsWith(QLatin1Char('-')))
@@ -231,12 +244,17 @@ int main(int argc, char *argv[]) {
     if (engine.rootObjects().isEmpty())
         return 1;
 
-    // Open the command-line video only after QML is up: VideoPanel would miss
+    // Open the command-line media only after QML is up: VideoPanel would miss
     // the frameReady() signal emitted during a pre-engine open and show a black
     // viewport until the next frame change.
     if (!startup_video.isEmpty() && QFileInfo(startup_video).isFile()) {
         if (!videoVM.openLocalPath(startup_video))
             qWarning() << "Failed to open video" << startup_video << ":" << videoVM.lastError();
+    }
+
+    if (!startup_audio.isEmpty() && QFileInfo(startup_audio).isFile()) {
+        if (!audioVM.openLocalPath(startup_audio))
+            qWarning() << "Failed to open audio" << startup_audio << ":" << audioVM.lastError();
     }
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [] {
