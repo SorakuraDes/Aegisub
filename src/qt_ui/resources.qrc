@@ -7,5 +7,7 @@
     <file>PreferencesWindow.qml</file>
     <file>PropertiesWindow.qml</file>
     <file>SearchDialog.qml</file>
+    <file>StylesWindow.qml</file>
+    <file>ShortcutMenuItem.qml</file>
   </qresource>
 </RCC>

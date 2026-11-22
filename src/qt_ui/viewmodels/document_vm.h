@@ -20,6 +20,8 @@ class DocumentViewModel final : public QObject {
     Q_PROPERTY(QString displayName READ displayName NOTIFY displayNameChanged)
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+    /// Encoding of the current document ("UTF-8" for new/just-saved files).
+    Q_PROPERTY(QString encoding READ encoding NOTIFY encodingChanged)
 
 public:
     DocumentViewModel(AssFile *file, SubtitleGridModel *gridModel, UndoManager *undoManager,
@@ -29,6 +31,7 @@ public:
     QString displayName() const;
     bool dirty() const;
     QString lastError() const;
+    QString encoding() const;
 
     Q_INVOKABLE bool newDocument();
     Q_INVOKABLE bool openFile(const QUrl &url);
@@ -43,11 +46,16 @@ signals:
     void displayNameChanged();
     void dirtyChanged();
     void lastErrorChanged();
+    void encodingChanged();
+    /// A new document was created or one was opened: every index that caches
+    /// file contents (styles, ...) must rebuild itself.
+    void documentReloaded();
 
 private:
     bool loadFromPath(const QString &path);
     bool saveToPath(const QString &path);
     void setFilePath(const QString &path);
+    void setEncoding(const QString &encoding);
     void setError(const QString &message);
     void clearErrorIfNeeded();
 
@@ -56,4 +64,5 @@ private:
     UndoManager *undoManager_;
     QString file_path_;
     QString last_error_;
+    QString encoding_ = QStringLiteral("UTF-8");
 };

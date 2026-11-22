@@ -97,6 +97,7 @@ void SubtitleGridModel::refresh() {
     beginResetModel();
     rebuildRows();
     endResetModel();
+    emit lineCountChanged();
 
     // Non-empty models start with the first line selected, empty ones have no
     // selection. Emit only on an actual change so listeners see a stable state.
@@ -121,6 +122,7 @@ void SubtitleGridModel::refreshPreservingActiveRow() {
     beginResetModel();
     rebuildRows();
     endResetModel();
+    emit lineCountChanged();
 
     int new_active;
     if (rows_.empty())
@@ -196,6 +198,10 @@ int SubtitleGridModel::activeRow() const {
 
 int SubtitleGridModel::selectionCount() const {
     return int(selected_rows_.size());
+}
+
+int SubtitleGridModel::lineCount() const {
+    return int(rows_.size());
 }
 
 const QSet<int> &SubtitleGridModel::selectedRows() const {

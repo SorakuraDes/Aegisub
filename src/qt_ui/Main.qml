@@ -17,6 +17,7 @@ ApplicationWindow {
     property var preferencesWindow: null
     property var propertiesWindow: null
     property var searchWindow: null
+    property var stylesWindow: null
 
     // Pending File-menu action while the unsaved-changes dialog is up, and the
     // action to resume once a (possibly Save As) save finished.
@@ -24,6 +25,8 @@ ApplicationWindow {
     property string pendingAfterSave: ""
     // Set once the user chose to discard; lets close() get through onClosing.
     property bool forceClose: false
+
+    // ---- Windows ---------------------------------------------------------
 
     function windowFor(kind) {
         if (kind === "about")
@@ -83,10 +86,28 @@ ApplicationWindow {
         searchWindow.focusField(useReplace)
     }
 
+    function openStyles() {
+        if (stylesWindow === null) {
+            var component = Qt.createComponent("qrc:/StylesWindow.qml")
+            if (component.status !== Component.Ready) {
+                console.error("Failed to load StylesWindow.qml", component.errorString())
+                return
+            }
+            stylesWindow = component.createObject(null)
+        }
+        stylesWindow.show()
+        stylesWindow.raise()
+        stylesWindow.requestActivate()
+    }
+
     function closeChildWindows() {
         if (searchWindow !== null) {
             searchWindow.close()
             searchWindow = null
+        }
+        if (stylesWindow !== null) {
+            stylesWindow.close()
+            stylesWindow = null
         }
         if (aboutWindow !== null) {
             aboutWindow.close()
@@ -101,6 +122,8 @@ ApplicationWindow {
             propertiesWindow = null
         }
     }
+
+    // ---- File actions ----------------------------------------------------
 
     function saveDocument() {
         if (documentVM.filePath === "")
@@ -164,13 +187,23 @@ ApplicationWindow {
             requestAction("quit")
             return
         }
-        // Do not leave the auxiliary windows (search, properties, ...) open:
-        // they would keep the application alive after the main window closes.
+        // Do not leave the auxiliary windows (search, styles, ...) open: they
+        // would keep the application alive after the main window closes.
         closeChildWindows()
     }
 
-    // Row actions from the keyboard, kept away from the text editors above.
-    // Delete / Ctrl+D act on the whole selection.
+    // Global shortcuts. The menu items are plain MenuItems (they need a custom
+    // contentItem to show shortcut hints), so the key bindings live here.
+    // Ctrl+Z / Ctrl+Y are handled by main.cpp's key filter.
+    Shortcut { sequence: StandardKey.New; onActivated: mainWindow.requestAction("new") }
+    Shortcut { sequence: StandardKey.Open; onActivated: mainWindow.requestAction("open") }
+    Shortcut { sequence: StandardKey.Save; onActivated: mainWindow.saveDocument() }
+    Shortcut { sequence: StandardKey.SaveAs; onActivated: saveAsDialog.open() }
+    Shortcut { sequence: StandardKey.Quit; onActivated: mainWindow.requestAction("quit") }
+    Shortcut { sequence: StandardKey.Find; onActivated: mainWindow.openSearch(false) }
+    Shortcut { sequence: StandardKey.Replace; onActivated: mainWindow.openSearch(true) }
+
+    // Row actions, kept away from the text editors above.
     Shortcut {
         sequence: "Delete"
         enabled: !mainWindow.textInputFocused() && gridModel.selectionCount > 0
@@ -192,114 +225,158 @@ ApplicationWindow {
         onActivated: gridModel.selectAll()
     }
 
+    // ---- Compact desktop menu bar ----------------------------------------
+
     menuBar: MenuBar {
+        id: mainMenuBar
+        padding: 0
+        spacing: 0
+
+        background: Rectangle {
+            implicitHeight: 28
+            color: "#252525"
+        }
+
+        delegate: MenuBarItem {
+            id: barItem
+            implicitHeight: 28
+            topPadding: 0
+            bottomPadding: 0
+            leftPadding: 10
+            rightPadding: 10
+
+            contentItem: Label {
+                // Qt Quick Labels do not interpret '&' mnemonics, so drop them
+                // instead of showing "&File".
+                text: (barItem.text.length > 0
+                       ? barItem.text
+                       : (barItem.action ? barItem.action.text : "")).replace(/&/g, "")
+                font.pixelSize: 13
+                color: barItem.highlighted ? Material.accent : "#e6e6e6"
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            background: Rectangle {
+                color: barItem.highlighted ? "#333333" : "transparent"
+            }
+        }
+
         Menu {
             title: "&File"
-            Action {
-                text: "&New"
-                shortcut: StandardKey.New
+            ShortcutMenuItem {
+                text: i18n.t("New")
+                shortcutText: "Ctrl+N"
                 onTriggered: mainWindow.requestAction("new")
             }
-            Action {
-                text: "&Open..."
-                shortcut: StandardKey.Open
+            ShortcutMenuItem {
+                text: i18n.t("Open...")
+                shortcutText: "Ctrl+O"
                 onTriggered: mainWindow.requestAction("open")
             }
-            Action {
-                text: "&Save"
-                shortcut: StandardKey.Save
+            ShortcutMenuItem {
+                text: i18n.t("Save")
+                shortcutText: "Ctrl+S"
                 onTriggered: mainWindow.saveDocument()
             }
-            Action {
-                text: "Save &As..."
-                shortcut: StandardKey.SaveAs
+            ShortcutMenuItem {
+                text: i18n.t("Save As...")
+                shortcutText: "Ctrl+Shift+S"
                 onTriggered: saveAsDialog.open()
             }
             MenuSeparator {}
-            Action {
-                text: "E&xit"
-                shortcut: StandardKey.Quit
+            ShortcutMenuItem {
+                text: i18n.t("Exit")
+                shortcutText: "Ctrl+Q"
                 onTriggered: mainWindow.requestAction("quit")
             }
         }
 
         Menu {
             title: "&Edit"
-            Action {
+            ShortcutMenuItem {
                 // Dynamic label in the style of the wxWidgets frontend:
                 // "Undo <what will be undone>".
                 text: undoVM.canUndo && undoVM.undoDescription.length > 0
-                      ? "&Undo " + undoVM.undoDescription
-                      : "&Undo"
-                shortcut: StandardKey.Undo
+                      ? i18n.t("Undo") + " " + undoVM.undoDescription
+                      : i18n.t("Undo")
+                shortcutText: "Ctrl+Z"
                 enabled: undoVM.canUndo
                 onTriggered: undoVM.undo()
             }
-            Action {
+            ShortcutMenuItem {
                 text: undoVM.canRedo && undoVM.redoDescription.length > 0
-                      ? "&Redo " + undoVM.redoDescription
-                      : "&Redo"
-                shortcut: StandardKey.Redo
+                      ? i18n.t("Redo") + " " + undoVM.redoDescription
+                      : i18n.t("Redo")
+                shortcutText: "Ctrl+Y"
                 enabled: undoVM.canRedo
                 onTriggered: undoVM.redo()
             }
             MenuSeparator {}
-            Action {
-                text: "&Find..."
-                shortcut: StandardKey.Find
+            ShortcutMenuItem {
+                text: i18n.t("Find...")
+                shortcutText: "Ctrl+F"
                 onTriggered: mainWindow.openSearch(false)
             }
-            Action {
-                text: "&Replace..."
-                shortcut: StandardKey.Replace
+            ShortcutMenuItem {
+                text: i18n.t("Replace...")
+                shortcutText: "Ctrl+H"
                 onTriggered: mainWindow.openSearch(true)
             }
         }
 
         Menu {
             title: "&Subtitle"
-            Action {
-                text: "Insert &Before"
+            ShortcutMenuItem {
+                text: i18n.t("Insert Before")
                 onTriggered: gridModel.insertBefore(gridModel.activeRow)
             }
-            Action {
-                text: "Insert &After"
+            ShortcutMenuItem {
+                text: i18n.t("Insert After")
+                shortcutText: "Insert"
                 onTriggered: gridModel.insertAfter(gridModel.activeRow)
             }
             MenuSeparator {}
-            Action {
-                text: "D&uplicate"
+            ShortcutMenuItem {
+                text: i18n.t("Duplicate")
+                shortcutText: "Ctrl+D"
                 enabled: gridModel.selectionCount > 0
                 onTriggered: gridModel.duplicateSelectedRows()
             }
-            Action {
-                text: "De&lete"
+            ShortcutMenuItem {
+                text: i18n.t("Delete")
+                shortcutText: "Del"
                 enabled: gridModel.selectionCount > 0
                 onTriggered: gridModel.deleteSelectedRows()
             }
             MenuSeparator {}
-            Action {
-                text: "&Properties..."
+            ShortcutMenuItem {
+                text: i18n.t("Styles Manager...")
+                onTriggered: mainWindow.openStyles()
+            }
+            ShortcutMenuItem {
+                text: i18n.t("Properties...")
                 onTriggered: mainWindow.openWindow("properties")
             }
         }
 
         Menu {
             title: "&Tools"
-            Action {
-                text: "&Preferences..."
+            ShortcutMenuItem {
+                text: i18n.t("Preferences...")
                 onTriggered: mainWindow.openWindow("preferences")
             }
         }
 
         Menu {
             title: "&Help"
-            Action {
-                text: "&About Aegisub"
+            ShortcutMenuItem {
+                text: i18n.t("About Aegisub")
                 onTriggered: mainWindow.openWindow("about")
             }
         }
     }
+
+    // ---- Dialogs ---------------------------------------------------------
 
     FileDialog {
         id: openDialog
@@ -378,15 +455,17 @@ ApplicationWindow {
         }
     }
 
+    // ---- Workspace -------------------------------------------------------
+
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 8
+        anchors.margins: 8
+        spacing: 6
 
         // Error banner (e.g. failed open/save); closable.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 34 : 0
+            Layout.preferredHeight: visible ? 32 : 0
             visible: documentVM.lastError.length > 0
             color: "#5a1f1f"
             radius: 4
@@ -414,17 +493,62 @@ ApplicationWindow {
             }
         }
 
-        // The subtitle grid takes over the middle of the window.
-        Loader {
+        // Desktop workspace: draggable vertical split between grid and editor.
+        SplitView {
+            id: mainSplit
             Layout.fillWidth: true
             Layout.fillHeight: true
-            source: "qrc:/SubtitleGrid.qml"
-        }
+            orientation: Qt.Vertical
 
-        // Single-line editor for the selected row.
-        Loader {
-            Layout.fillWidth: true
-            source: "qrc:/EditBox.qml"
+            handle: Rectangle {
+                implicitHeight: 6
+                color: SplitHandle.hovered ? "#3a3a3a" : "#1e1e1e"
+            }
+
+            Loader {
+                id: gridLoader
+                source: "qrc:/SubtitleGrid.qml"
+                SplitView.fillHeight: true
+                SplitView.minimumHeight: 160
+            }
+
+            Loader {
+                id: editBoxLoader
+                source: "qrc:/EditBox.qml"
+                SplitView.preferredHeight: 185
+                SplitView.minimumHeight: 150
+            }
+        }
+    }
+
+    // ---- Compact status bar ---------------------------------------------
+
+    footer: Rectangle {
+        height: 24
+        color: "#252525"
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            spacing: 8
+
+            Label {
+                text: gridModel.lineCount + " " + i18n.t("lines")
+                      + (gridModel.selectionCount > 1
+                         ? " | " + gridModel.selectionCount + " " + i18n.t("selected")
+                         : "")
+                font.pixelSize: 11
+                color: "#9a9a9a"
+            }
+
+            Item { Layout.fillWidth: true }
+
+            Label {
+                text: documentVM.encoding + " | Aegisub " + appInfo.version
+                font.pixelSize: 11
+                color: "#8a8a8a"
+            }
         }
     }
 }

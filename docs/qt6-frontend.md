@@ -18,7 +18,10 @@
 | 7 | `acdcb2065` | `AssFile::Commit` 统一提交总线 + 轻量 `UndoManager`（快照栈、合并提交、`isModified`）+ 脏标记改由撤销位置推导 + Edit 菜单 / `Ctrl+Z`·`Ctrl+Y` + 未保存确认框；新增 `commit_bridge`（隔离 wxString） |
 | 8A | `b5278c711` | 网格行操作 `insertBefore`/`insertAfter`/`duplicateRow`/`deleteRow`（走 `COMMIT_DIAG_ADDREM`，原生 Undo/Redo）+ 网格右键上下文菜单 + `Subtitle` 菜单 4 项 + 焦点隔离快捷键（`Delete`/`Insert`/`Ctrl+D`） |
 | 8B | `8061f69d5` | EditBox 补齐核心字段（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`）+ `availableStyles` + 时长联动 + Enter 键盘流（`Enter` 提交并下一行、`Shift+Enter` 插 `\N`，由 C++ 键过滤器实现）；`EditBox.qml` 重排为两行顶栏 + 正文区 |
-| 9A | 本次工作区改动（未提交） | 网格多选（`selected_rows_`/`anchor`/`isSelected` role/`selectionCount`、`selectSingle`/`toggleSelect`/`selectRange`/`selectAll`）+ 批量行操作与批量元数据（单次 Commit、一次撤销全部）+ `SearchViewModel`/`SearchDialog.qml` 查找替换（正则/字段/选区范围、`Replace All` 单次提交） |
+| 9A | `04e26bb7c` | 网格多选（`selected_rows_`/`anchor`/`isSelected` role/`selectionCount`、`selectSingle`/`toggleSelect`/`selectRange`/`selectAll`）+ 批量行操作与批量元数据（单次 Commit、一次撤销全部）+ `SearchViewModel`/`SearchDialog.qml` 查找替换（正则/字段/选区范围、`Replace All` 单次提交） |
+| 9B | 本次工作区改动（未提交） | **M1 终章**：样式管理器（`StylesViewModel` + `StylesWindow.qml`：增删复制/改名联动字幕行、字体字号颜色对齐边距、实时预览）+ 主窗口竖直 `SplitView` + 紧凑菜单栏（28px + 快捷键提示列，`ShortcutMenuItem.qml`）+ 24px 底部状态栏（行数/选区/编码/版本） |
+
+> **M1 里程碑（Stage 0–9B）**：Qt6/QML 前端已具备与 wx 版并行的日常编辑能力——真实 `.ass` 读写、统一提交/撤销总线、行操作与多选批量、EditBox 全字段与键盘流、查找替换、样式管理器，以及桌面级工作区（紧凑菜单/可拖拽分区/状态栏）。原版 wx 构建同步保持可用（双轨制）。
 
 ## 2. 目录结构
 
@@ -37,6 +40,8 @@ src/qt_ui/
 ├── PreferencesWindow.qml     # 首选项（Backup 页，App/Auto/Save）
 ├── PropertiesWindow.qml      # 脚本配置（Title / PlayResX / PlayResY + 打印 ASS）
 ├── SearchDialog.qml          # 非模态查找/替换窗口（Find/Replace 复用同一实例）
+├── StylesWindow.qml          # 非模态样式管理器（列表 + 表单 + 实时预览）
+├── ShortcutMenuItem.qml      # 紧凑菜单项：右侧显示快捷键提示（Qt Quick MenuItem 不渲染）
 └── viewmodels/
     ├── app_info_vm.{h,cpp}          # 版本号（src/version.cpp + git_version.h）
     ├── about_vm.{h,cpp}             # 关于窗口数据
@@ -47,6 +52,7 @@ src/qt_ui/
     ├── edit_box_vm.{h,cpp}          # 选中行全字段双向编辑（文本/时间/时长/元数据）+ Enter 键盘流
     ├── undo_manager.{h,cpp}         # 快照式 Undo/Redo 栈 + 合并提交 + isModified
     ├── search_vm.{h,cpp}            # 查找/替换（正则、字段、选区范围、单次提交）
+    ├── styles_vm.{h,cpp}            # [V4+ Styles] 样式列表/字段编辑、改名联动字幕行
     └── document_vm.{h,cpp}          # 文件路径/脏标记/错误 + 打开保存（AssParser/AssSubtitleFormat）
 ```
 
@@ -82,6 +88,8 @@ aegisub_core ──► libaegisub（agi::Path / agi::Options / agi::Time / agi::
 - **QML 字段回填策略**：EditBox 的输入框**不做属性绑定**，由 `loadSelection()` 显式回填；时间三件套在 `startTimeChanged`/`endTimeChanged`/`durationChanged` 时用 `syncTimeFields()` 只更新**没有焦点**的字段，避免把正在输入的文本按规范化格式覆盖掉（会跳光标）。
 - **多选与批量（Stage 9A）**：`SubtitleGridModel` 维护 `active_row_` + `selected_rows_`（`QSet<int>`）+ `anchor_row_`，新增 `isSelected` role、`selectionCount` 属性以及 `selectSingle` / `toggleSelect` / `selectRange` / `selectAll`；QML 按点击修饰键分派（`Shift`=区间、`Ctrl`=切换、普通=单选、`Ctrl+A`=全选，EditBox 有焦点时不许劫持）。`duplicateSelectedRows()` / `deleteSelectedRows()` 先收集 `AssDialogue*` 再一次性插入或「先摘链再 delete」，**单次** `Commit(COMMIT_DIAG_ADDREM)`，所以一次 `Ctrl+Z` 整体撤销；行结构变化后 `refreshPreservingActiveRow()` 调用 `sanitizeSelection()` 把选中集合校准到合法行号并保证至少选中活动行。EditBox 的元数据字段在多选时对 `metadataTargets()`（全部选中行）批量写入，并以 `single_line = nullptr` 单次提交 `COMMIT_DIAG_META`（正文/时间仍只改活动行）；网格对这类「无 single_line 的内容提交」只发全行 `dataChanged`，不做 model reset，这样撤销合并状态与选中集合都不会被打断。
 - **查找与替换（Stage 9A）**：`SearchViewModel` 独立持有 `AssFile*` + `SubtitleGridModel*`，按 `searchField`（0=Text、1=Actor、2=Effect、3=Style）取字段；普通模式用 `QString::contains`（可选大小写），正则模式用 `QRegularExpression`（非法正则只写 `statusMessage`，不崩溃）。`findNext`/`findPrev` 从活动行环形查找，命中后 `selectSingle` 并发 `locateRow`（QML 里 `positionViewAtIndex`）。`replaceAll` 遍历全表或 `inSelectionOnly` 时的选中行，累计后**单次** `Commit`，状态行报 `Replaced N occurrence(s) in M line(s)`；`replaceCurrent` 替换活动行后自动跳下一处。搜索窗口是独立的非模态 `Window`，`Edit→Find...`（`Ctrl+F`）/`Replace...`（`Ctrl+H`）复用同一实例并聚焦对应输入框，主窗口关闭时一起关闭。
+- **样式管理器（Stage 9B）**：`StylesViewModel` 持有 `AssFile*`，自己维护 `std::vector<AssStyle*>` 索引 + 名称缓存（`refreshStyles()` 只从缓存重建，不 deref 旧指针，因此 `restored()` 里调用是安全的）；所有字段修改先写 `AssStyle`，再 `UpdateData()`（`AssStyle` 缓存了它的 ASS 行）后 `Commit(COMMIT_STYLES)`，1000ms 合并窗口避免每次 SpinBox 都成一步撤销。改名会同时改 `AssFile::Events` 里的 `Style` 与正文中 `{\rOld}` 覆写标签（`AssDialogue::ParseTags`/`UpdateText` + `ProcessParameters`），以 `COMMIT_STYLES | COMMIT_DIAG_META` **单次**提交。`New`/`Copy`/`Delete` 的名字用大小写不敏感去重，且保证至少保留一条样式。`New`/`Open` 不走 `Commit`，所以 `DocumentViewModel::documentReloaded()` 显式通知样式表重建。
+- **桌面工作区（Stage 9B）**：内容区是竖直 `SplitView`（网格 `fillHeight`/min 160，EditBox preferred 185/min 150），可拖拽调比例；`MenuBar` 用自定义 delegate 压到 28px、字号 13px，菜单项改用 `ShortcutMenuItem`（平铺 `MenuItem` + `contentItem` 里左右两段文字）显示快捷键提示——Qt Quick 的 `MenuItem` 本身不渲染快捷键列；快捷键因此全部改用 `Shortcut` 元素注册（`Ctrl+Z/Y` 仍由 `main.cpp` 的过滤器处理）。`footer` 是 24px 状态栏（行数 / 选区数 / 编码 / 版本号）。
 - **菜单/文件对话框**：`Main.qml` 的 `menuBar` 提供 File（New/Open/Save/Save As/Exit）、Subtitle（Properties）、Tools（Preferences）、Help（About），`QtQuick.Dialogs` 的 `FileDialog` 负责 Open / Save As。
 - **命令行**：`aegisub-qt.exe [file.ass]`，参数存在且是文件则启动即打开，否则 `newDocument()`。
 
@@ -151,6 +159,10 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 23. **批量修改多行要传 `single_line = nullptr`**：网格的 `onFileCommitted` 对「带 single_line 的内容提交」只对那一行发 `dataChanged`；批量改多行如果不传 nullptr，就只有活动行会重绘，其余行还是旧值。传 nullptr 时网格对全部行发 `dataChanged`（**不要**在这里做 model reset，原因见坑 25）。
 24. **行号型选中集合必须重新校准**：`selected_rows_` 存的是行号，删除/插入/撤销会改变行号含义，`refreshPreservingActiveRow()` 里必须 `sanitizeSelection()`（丢弃越界、保证有行时至少选中一行），否则 EditBox 的批量目标与 `selectionCount` 会指向错误行甚至越界。
 25. **内容类批量提交不能触发 `modelReset`**：`EditBoxViewModel` 在 `modelReset` 里会 `resetCoalescing()`。批量元数据提交是 `single_line = nullptr`（网格拿不到具体行），如果为此走全量 `refreshPreservingActiveRow()`，逐字符输入会被打断成「一个按键一步撤销」。正确做法：内容类提交（`COMMIT_DIAG_FULL`，含批量元数据与 Replace All）只发全行 `dataChanged`；只有结构性提交（`COMMIT_DIAG_ADDREM` / `COMMIT_ORDER` / `COMMIT_STYLES` / `COMMIT_NEW`）才 reset 索引。
+26. **表单回填必须先挂守卫**：`SpinBox` / `CheckBox` 在创建时用自己的初始值触发 `onValueChanged` / `onToggled`，如果处理器直接写 ViewModel，会把模型值写成初始值（实测样式管理器的 `fontSize` 被写成 `from: 1`，且顺手提交了一次）。做法：QML 里一个 `loadingForm` 标志，`loadStyleForm()` 赋值前置 true、赋完置 false，处理器里 `if (!loadingForm && vm != value)` 才写回。
+27. **`ass_override.h` 没有 include guard**：`ass_dialogue.h` 已经 include 了它，再显式 include 会 C2011 重定义（和坑 3 的 `option_value.h` 同一类问题）。改名联动 `{\r...}` 标签时直接用 `AssDialogue::ParseTags` / `AssDialogue::BlockOverride::ProcessParameters` 即可。
+28. **`AssStyle` 缓存了它的 ASS 行**：改完 `name`/`font`/颜色等字段后必须 `AssStyle::UpdateData()` 再 `Commit`，否则写盘用的还是旧串（这也是改名要 `UpdateData()` 的原因）。
+29. **Material `Button` 压到 28px 高会看不到文字**：Material 默认上下 padding 合计超过按钮高度，contentItem 被裁掉（实测样式管理器左下的 New/Copy/Delete 变成空胶囊）。压高度时同时把 `topPadding`/`bottomPadding` 归零、高度给到 30px，或干脆自绘（3×3 对齐键盘就是自绘 Rectangle + Label）。
 
 ## 6. 已知限制（下一步工作）
 
@@ -160,6 +172,8 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 - **EditBox 仍缺的字段/交互**：没有 `MarginL/MarginR/MarginV` 三个边距、没有时间微调按钮（±10ms/±帧）与「按帧编辑」、没有自动定位到视频时间；`availableStyles` 只来自当前文件的 `[V4+ Styles]`（不读样式库）；新增字段的 UI 文案（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`/`chars`）还没进 po，实际显示英文。
 - **网格操作仍有缺口**：已支持插行 / 复制 / 删行 / 多选批量操作（含 Undo/Redo），但键盘范围选择（`Shift+↑/↓`）、拖拽框选、列排序、行折叠、跨行拖动都没做；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 仍是全量 `beginResetModel`，行数很多时每次增删都要整体重绘。
 - **查找替换限制**：只在当前文件内搜索（没有跨文件/批量目录替换）；命中只是选中整行，网格里不会高亮具体匹配片段；普通模式替换是字面量（正则模式用 `\1` 反向引用，不支持 `$1` 写法）；`In selection` 只在有多选时生效。
+- **样式管理器限制**：只编辑当前脚本的 `[V4+ Styles]`，不读写样式库/样式目录（`AssStyleStorage`）；未暴露 ScaleX/ScaleY、Spacing、Angle、Encoding；没有颜色选择器（只能填 `#RRGGBB` + Alpha）、不能多选样式；预览是纯 QML `Text`，只反映字体/字号/粗斜下删/主色/描边色，不渲染 ASS 的阴影、不透明度混合等真实效果；删样式不做引用修复（与 wx 版一致，字幕行会保留指向已删除样式的名字）。
+- **菜单/工作区限制**：Qt Quick `Label` 不解析 `&` 助记符，菜单栏标题里的 `&` 被剥掉了（`Alt+F` 这类键盘导航不可用）；菜单项快捷键列是 `ShortcutMenuItem` 自绘的静态文本，真正的按键由 `Shortcut` 元素驱动，两者必须手动保持一致；状态栏编码在新建文档和保存后固定显示 `UTF-8`（保存永远写 UTF-8）。
 - **大文件性能**：`ListView` 已复用 delegate，但尚无分页/滚动加载。
 - **没有最近文件列表 / 另存时的编码选择器**（当前保存固定 UTF-8，打开时自动检测）。
 - **未保存确认框**：`Save` 分支里如果用户取消了「另存为」系统对话框，原动作（New/Open/退出）会停住而不是继续/中止；没有「稍后再说」以外的记忆。
@@ -210,3 +224,13 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
     - `Ctrl+F` 打开非模态 `Find & Replace`：`Find Next`/`Find Prev` 选中并滚动定位（状态 `Line N`）；
     - `Replace All`（普通/正则/`In selection`）：状态 `Replaced N occurrence(s) in M line(s)`，一次 `Ctrl+Z` 全部撤销；正则非法只显示 `Invalid regular expression` 不崩溃；`Replace` 替换当前命中并跳到下一处；
     - `Esc` 关闭搜索窗，`Edit→Find/Replace` 复用同一实例并聚焦对应输入框，关闭主窗口时搜索窗一起关闭、进程退出。
+  - Stage 9B（M1 终章：样式管理器 + 桌面工作区，脚本/截图在 `.build-tools/stage9b/`，不入库）：
+    - Styles Manager 独立窗（800×560）：列表 `Default`/`Title`、表单与 ASS 一致（`Arial`/`48`/`#ffffff`/`A=255`）、`Preview Text` 正常渲染；
+    - `New`/`Copy`/`Delete`：新样式实时进入 EditBox 的 `Style` 下拉、`Copy` 不重名、删除同步消失；删到只剩 1 条再删显示 `Cannot delete the last style` 且列表保留 1 条；
+    - 改 `Size`/`Bold`/`Primary`/对齐 → 预览实时变化、标题 `*`；保存后磁盘 `Style: Title` 行为 `60`/`-1`/`&H0000FF00`/`7`，重开文件后值仍在；
+    - 重命名 `Title`→`TitleNew` 联动网格 `Style` 列，级联到 `{\r...}` 标签，**一次** `Ctrl+Z` 样式表与字幕行同时回退；
+    - 样式字段编辑撤销后表单/预览立即刷新（即使样式窗仍打开）；`Esc` 关闭、关闭主窗口连带关闭；
+    - 紧凑菜单栏高 **28px**、无 `&` 字符，File/Edit/Subtitle 菜单右侧显示 `Ctrl+N/O/S/Shift+S/Q`、`Ctrl+Z/Y/F/H`、`Ctrl+D`/`Del`/`Insert` 提示；
+    - `SplitView` 可拖拽（实测网格 457→409、EditBox 175→223，且不低于 160/150）；状态栏 `5 lines` → `5 lines | 3 selected` → `6 lines`，右侧 `utf-8 | Aegisub <版本>`；
+    - 回归（文本编辑/撤销、行操作、查找替换、未保存确认框）正常，stderr 无 QML 警告/报错。
+    - **「偶发静默退出」的排查结论**：不是应用崩溃，而是**两套自动化脚本按进程名互杀**（旧 `lib.ps1` 的 `Start-App()` 用 `Get-Process -Name aegisub-qt | Stop-Process -Force` 做全局清理，且两个测试同时在跑）。改为按 PID 清理后串行复跑 30 轮：`ExitCode` 全为 0、无 PREMATURE_EXIT、事件日志无 `Application Error`/WER、无按键被误触到窗口关闭按钮。

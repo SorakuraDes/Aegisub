@@ -31,6 +31,8 @@ class SubtitleGridModel final : public QAbstractListModel {
     Q_PROPERTY(int activeRow READ activeRow WRITE setActiveRow NOTIFY activeRowChanged)
     /// Number of rows in the selection (never 0 while the file has lines).
     Q_PROPERTY(int selectionCount READ selectionCount NOTIFY selectionCountChanged)
+    /// Number of dialogue lines (for the status bar).
+    Q_PROPERTY(int lineCount READ lineCount NOTIFY lineCountChanged)
 
 public:
     enum Roles {
@@ -57,6 +59,8 @@ public:
     void setActiveRow(int row);
 
     int selectionCount() const;
+
+    int lineCount() const;
 
     /// The AssDialogue behind the selected row, or nullptr.
     AssDialogue *getActiveDialogue();
@@ -112,6 +116,7 @@ public:
 signals:
     void activeRowChanged();
     void selectionCountChanged();
+    void lineCountChanged();
 
 private:
     void rebuildRows();

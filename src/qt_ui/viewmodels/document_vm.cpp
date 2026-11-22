@@ -65,6 +65,17 @@ QString DocumentViewModel::lastError() const {
     return last_error_;
 }
 
+QString DocumentViewModel::encoding() const {
+    return encoding_;
+}
+
+void DocumentViewModel::setEncoding(const QString &encoding) {
+    if (encoding_ == encoding)
+        return;
+    encoding_ = encoding;
+    emit encodingChanged();
+}
+
 void DocumentViewModel::setFilePath(const QString &path) {
     if (file_path_ == path)
         return;
@@ -105,6 +116,8 @@ bool DocumentViewModel::newDocument() {
         // every future undo returns to.
         if (undoManager_)
             undoManager_->resetToClean();
+        setEncoding(QStringLiteral("UTF-8"));
+        emit documentReloaded();
         return true;
     } catch (agi::Exception const &e) {
         setError(QString::fromStdString(e.GetMessage()));
@@ -147,6 +160,8 @@ bool DocumentViewModel::loadFromPath(const QString &path) {
         // The freshly loaded contents are the clean baseline: undo stops here.
         if (undoManager_)
             undoManager_->resetToClean();
+        setEncoding(QString::fromStdString(encoding));
+        emit documentReloaded();
         qInfo() << "[document] loaded" << path << "encoding" << QString::fromStdString(encoding)
                 << "lines" << int(file_->Events.size());
         return true;
@@ -182,6 +197,8 @@ bool DocumentViewModel::saveToPath(const QString &path) {
         // title bar drops the '*' and undoing back here clears it again.
         if (undoManager_)
             undoManager_->markSaved();
+        // Saving always writes UTF-8 (see AssSubtitleFormat::WriteFile above).
+        setEncoding(QStringLiteral("UTF-8"));
         clearErrorIfNeeded();
         qInfo() << "[document] saved" << path;
         return true;

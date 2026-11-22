@@ -10,6 +10,7 @@
 #include "viewmodels/preferences_vm.h"
 #include "viewmodels/properties_vm.h"
 #include "viewmodels/search_vm.h"
+#include "viewmodels/styles_vm.h"
 #include "viewmodels/subtitle_grid_model.h"
 #include "viewmodels/translation_service.h"
 #include "viewmodels/undo_manager.h"
@@ -156,6 +157,12 @@ int main(int argc, char *argv[]) {
     EditBoxViewModel editBoxVM(&gridModel, &script, &undoManager);
     DocumentViewModel documentVM(&script, &gridModel, &undoManager);
     SearchViewModel searchVM(&script, &gridModel);
+    StylesViewModel stylesVM(&script, &undoManager);
+
+    // New/Open does not go through AssFile::Commit, so the style index has to
+    // be told about a fresh document explicitly.
+    QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
+                     &stylesVM, &StylesViewModel::handleDocumentReload);
 
     UndoShortcutFilter undoFilter(&undoManager);
     app.installEventFilter(&undoFilter);
@@ -175,6 +182,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("documentVM", &documentVM);
     engine.rootContext()->setContextProperty("undoVM", &undoManager);
     engine.rootContext()->setContextProperty("searchVM", &searchVM);
+    engine.rootContext()->setContextProperty("stylesVM", &stylesVM);
 
     // Optional first command line argument: a subtitle file to open.
     const QStringList args = QCoreApplication::arguments();
