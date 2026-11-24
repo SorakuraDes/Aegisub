@@ -6,6 +6,8 @@
 #include "audio_waveform_item.h"
 #include "video_bridge.h"
 #include "video_viewport_item.h"
+#include "visual_overlay_item.h"
+#include "viewmodels/visual_tools_vm.h"
 #include "viewmodels/about_vm.h"
 #include "viewmodels/app_info_vm.h"
 #include "viewmodels/audio_vm.h"
@@ -227,6 +229,7 @@ int main(int argc, char *argv[]) {
     // the current video position and then follows the audio clock.
     videoVM.setAudioViewModel(&audioVM);
     ShiftTimesViewModel shiftTimesVM(&script, &gridModel, &videoVM);
+    VisualToolsViewModel visualToolsVM(&script, &gridModel, &videoVM, &undoManager);
 
     // New/Open does not go through AssFile::Commit, so the style index has to
     // be told about a fresh document explicitly.
@@ -235,6 +238,8 @@ int main(int argc, char *argv[]) {
     // The video preview caches a libass track, so it needs the same treatment.
     QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
                      &videoVM, &VideoViewModel::handleDocumentReload);
+    QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
+                     &visualToolsVM, &VisualToolsViewModel::handleDocumentReload);
     // The audio panel caches the active line to draw its red/blue lines.
     QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
                      &audioVM, &AudioViewModel::handleDocumentReload);
@@ -253,6 +258,7 @@ int main(int argc, char *argv[]) {
 
     // QML-only wrappers that paint the media view models.
     qmlRegisterType<VideoViewportItem>("Aegisub", 1, 0, "VideoViewport");
+    qmlRegisterType<VisualOverlayItem>("Aegisub", 1, 0, "VisualOverlay");
     qmlRegisterType<AudioWaveformItem>("Aegisub", 1, 0, "AudioWaveform");
 
     QQmlApplicationEngine engine;
@@ -268,6 +274,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("searchVM", &searchVM);
     engine.rootContext()->setContextProperty("stylesVM", &stylesVM);
     engine.rootContext()->setContextProperty("videoVM", &videoVM);
+    engine.rootContext()->setContextProperty("visualToolsVM", &visualToolsVM);
     engine.rootContext()->setContextProperty("audioVM", &audioVM);
     engine.rootContext()->setContextProperty("shiftTimesVM", &shiftTimesVM);
 

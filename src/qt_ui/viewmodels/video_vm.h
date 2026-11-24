@@ -127,6 +127,10 @@ public:
     /// New/Open replaced the document: refresh the libass track.
     Q_INVOKABLE void handleDocumentReload();
 
+    QSize scriptResolution() const;
+    void scheduleVisualSubtitleRefresh();
+    void flushVisualSubtitleRefresh();
+
 signals:
     void hasVideoChanged();
     void videoNameChanged();
@@ -166,6 +170,7 @@ private:
     void onAudioLinePlaybackStarted();
     void scheduleSubtitleReload();
     void reloadSubtitlesAndRedraw();
+    void loadSubtitleTrack();
     /// Start time of the grid's active line in milliseconds, or -1.
     int activeLineStartMs() const;
 
@@ -194,6 +199,7 @@ private:
 
     /// Debounces the libass reload while the user types (one commit per key).
     QTimer subtitle_reload_timer_;
+    bool visual_reload_pending_ = false;
 
     agi::signal::Connection commit_connection_;
 };

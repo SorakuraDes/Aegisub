@@ -240,6 +240,20 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 55. **双面板下控制条空间很紧**：视频面板 460px 时 `Play/步进/时间轴/Frame 时间码/Sync` 本来就放不下（Stage 10A 起 `Sync` 在双面板布局里被裁掉，UIA 文本仍完整）；Stage 11B 的 `KF` 徽标放在帧号槽位内部、不额外占宽，音频条则在面板宽 <700px 时隐藏时间区间 Label、`<620px` 时隐藏轨道标签，把空间留给 `Snap KF`、播放状态和音量。改这些宽度时注意别把 `Play Line`/`Snap KF`/`XAudio2` 状态挤出可见区域（UIA 断言不依赖可见宽度，但人眼看得到）。
 
 
+### Stage 12：视频视觉工具（M3 路线 B）
+
+- `VideoViewportItem::contentRect` 是实际绘制视频帧的等比居中矩形（不含黑边），尺寸或帧宽高比改变时重新计算。`VisualOverlayItem` 的绘制、八个裁剪手柄的命中、鼠标坐标与脚本坐标互转共享此矩形。`Std` 只显示悬停坐标；`Pos` 可从准星或画面开始定位；`Clip` 可拖角、拖边、框内平移，也可在已有框外拖出新框。无矩形标签时以整帧虚线框起步。
+- `ass_tag_utils` 按原文区间编辑顶层覆写标签，不重写正文、中文或其他标签。锚点取显式 `\pos`、`\move` 起点，或按样式/行边距及 `\an`/`\a` 算出的静态位置。首次写静态 `\pos` 会移除与之冲突的顶层 `\move`，可撤销。`Clip` 只编辑普通矩形 `\clip`；不改矢量、反向 `\iclip` 或 `\t(...)` 内嵌裁剪，只有矢量或反向标签时不额外插入普通矩形。
+- `VisualToolsViewModel` 使用 `COMMIT_DIAG_TEXT` 展开实时 EditBox/网格联动，通过 `commit_bridge` 的返回 ID 合并同一手势的撤销快照。切行、换工具、文档替换、Undo/Redo 或失去鼠标捕获会结束当前手势。`×` 是独立可撤销提交。视频预览在拖拽时用 16ms 合并刷新，松手补画最后状态；键入文字仍用 100ms 防抖。缺失的 `PlayRes` 按轴回退视频尺寸或 384×288，libass 预览使用同一分辨率而不改写文档头。
+- `VideoPanel` 左侧新增 36px 工具栏；控制条使用紧凑播放按钮和独立 `KF` 槽位，窄面板在第二行显示坐标以保留 `Sync` 和时间轴。新增 `qt-ass-tag-utils` Meson 测试，无额外运行依赖。
+
+**构建与实测（2026-11-24，`feature`，未提交）**：
+
+- `bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe src/qt_ui/qt-ass-tag-utils-test.exe` → `EXIT 0`，Qt 与单测均链接成功；单测程序运行 `EXIT 0`。全量 `bash .build-tools/build_ninja.sh` → `EXIT 0`，原版 `aegisub.exe` 正常链接。日志：[Qt](../build/stage12-qt-final.log)、[双轨](../build/stage12-full.log)。
+- Windows UI Automation + 实际窗口截图 **38/38**。`test_stage6_input.ass` + Dummy Video：默认准星未写标签；鼠标仍按住时，`\pos(254.2,109.7)` 已出现在 EditBox/网格、标题出现 `*`，黄色字幕像素向左移动。原行加入 `\i1\fad(0,30)` 后对中文行另做拖拽，标签及正文逐字保留；一次 `Ctrl+Z` 恢复拖拽前覆写块。[定位截图](../build/stage12-e2e/20261124-214306/03_pos_mouse_held.png)、[中文和原有标签截图](../build/stage12-e2e/20261124-214306/08_pos_chinese_tags_held.png)。
+- 裁剪右边拖到 `\clip(0,0,642,720)` 时，松手前黄色字幕像素已由 1083 降到 560；单次撤销恢复原文和干净标题，Redo 恢复矩形；`×` 清除及一次 Undo 通过。手改 `\pos(100,100)`、切行后准星跳转及 `Std` 悬停 `640, 359` 均通过。双面板 `Sync` 可见且可切换，`KF` 在第 49 帧出现、下一帧消失。两次 GUI 实例正常退出 `0`，stderr 无 QML 警告/错误或致命错误；原始 ASS 文件哈希不变。[裁剪截图](../build/stage12-e2e/20261124-214306/05_clip_mouse_held.png)、[双面板截图](../build/stage12-e2e/20261124-214306/10_dual_panel_sync_kf.png)、[实测记录](../build/stage12-e2e/20261124-214306/transcript.txt)。
+- Stage 11 回归 **7/7 套**：音画同步 29/29、无音轨 6/6、Shift Times 28/28、SRT 29/29、多音轨 34/34、关键帧/吸附 45/45、多视频轨 34/34。关键帧及多视频轨在临时脚本改用可见按钮/菜单控件定位后复跑通过；不改原回归脚本。[首轮日志](../build/stage12-regression.log)、[补跑日志](../build/stage12-rerun.log)。
+
 ## 6. 已知限制（下一步工作）
 
 - **Save As 的原生对话框自动化**：Stage 11A 起已覆盖——Windows 的 `FileDialog.SaveFile` 会弹出 `#32770` 原生窗口，自动化流程是「File 菜单 → Down×4 → Enter → 找到 `#32770` → 用控件 id 1001 `WM_SETTEXT` 写入绝对路径 → 点控件 id 1（保存）」，之后弹窗关闭、标题切到新文件名（见 §7）。仍依赖 Windows 原生对话框；换成非原生实现的环境需要另写。

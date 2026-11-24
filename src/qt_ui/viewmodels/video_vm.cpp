@@ -92,7 +92,6 @@ VideoViewModel::VideoViewModel(AssFile *file, SubtitleGridModel *gridModel,
     connect(&playback_timer_, &QTimer::timeout, this, &VideoViewModel::onPlaybackTick);
 
     subtitle_reload_timer_.setSingleShot(true);
-    subtitle_reload_timer_.setInterval(100);
     connect(&subtitle_reload_timer_, &QTimer::timeout,
             this, &VideoViewModel::reloadSubtitlesAndRedraw);
 
@@ -261,6 +260,7 @@ void VideoViewModel::closeVideo() {
     // Also stops a synced audio playback (see stopPlayback()).
     stopPlayback();
     subtitle_reload_timer_.stop();
+    visual_reload_pending_ = false;
 
     bridge_->Close();
 
@@ -392,8 +392,7 @@ void VideoViewModel::onVideoOpened(const QString &name) {
     current_frame_ = -1;
     pending_track_path_.clear();
 
-    if (file_)
-        bridge_->LoadSubtitles(file_);
+    loadSubtitleTrack();
 
     rebuildKeyframes();
 
@@ -622,14 +621,55 @@ void VideoViewModel::onActiveRowChanged() {
 }
 
 void VideoViewModel::scheduleSubtitleReload() {
-    // Debounce: EditBox commits once per typed character.
-    subtitle_reload_timer_.start();
+    // EditBox commits once per typed character; do not delay pending visual edits.
+    if (!visual_reload_pending_)
+        subtitle_reload_timer_.start(100);
+}
+
+void VideoViewModel::scheduleVisualSubtitleRefresh() {
+    if (!hasVideo() || visual_reload_pending_)
+        return;
+    visual_reload_pending_ = true;
+    subtitle_reload_timer_.start(16);
+}
+
+void VideoViewModel::flushVisualSubtitleRefresh() {
+    if (visual_reload_pending_)
+        reloadSubtitlesAndRedraw();
+}
+
+QSize VideoViewModel::scriptResolution() const {
+    const int x = file_ ? file_->GetScriptInfoAsInt("PlayResX") : 0;
+    const int y = file_ ? file_->GetScriptInfoAsInt("PlayResY") : 0;
+    return {x > 0 ? x : (videoWidth() > 0 ? videoWidth() : 384),
+            y > 0 ? y : (videoHeight() > 0 ? videoHeight() : 288)};
+}
+
+void VideoViewModel::loadSubtitleTrack() {
+    if (!file_)
+        return;
+    const bool missing_x = file_->GetScriptInfoAsInt("PlayResX") <= 0;
+    const bool missing_y = file_->GetScriptInfoAsInt("PlayResY") <= 0;
+    if (!missing_x && !missing_y) {
+        bridge_->LoadSubtitles(file_);
+        return;
+    }
+    // Keep the libass preview and overlay in the same script space without
+    // writing missing headers into the editable document or its undo history.
+    const auto res = scriptResolution();
+    AssFile preview(*file_);
+    if (missing_x)
+        preview.SetScriptInfo("PlayResX", std::to_string(res.width()));
+    if (missing_y)
+        preview.SetScriptInfo("PlayResY", std::to_string(res.height()));
+    bridge_->LoadSubtitles(&preview);
 }
 
 void VideoViewModel::reloadSubtitlesAndRedraw() {
+    subtitle_reload_timer_.stop();
+    visual_reload_pending_ = false;
     if (!hasVideo() || !file_)
         return;
-
-    bridge_->LoadSubtitles(file_);
+    loadSubtitleTrack();
     renderCurrentFrame();
 }

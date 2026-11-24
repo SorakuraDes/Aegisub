@@ -14,18 +14,27 @@
 class VideoViewportItem : public QQuickPaintedItem {
     Q_OBJECT
     Q_PROPERTY(QImage frame READ frame WRITE setFrame NOTIFY frameChanged)
+    Q_PROPERTY(QRectF contentRect READ contentRect NOTIFY contentRectChanged)
 
 public:
     explicit VideoViewportItem(QQuickItem *parent = nullptr);
 
     QImage frame() const;
     void setFrame(const QImage &frame);
+    QRectF contentRect() const;
 
     void paint(QPainter *painter) override;
 
 signals:
     void frameChanged();
+    void contentRectChanged();
+
+protected:
+    void geometryChange(const QRectF &new_geometry, const QRectF &old_geometry) override;
 
 private:
+    void updateContentRect();
+
     QImage frame_;
+    QRectF content_rect_;
 };
