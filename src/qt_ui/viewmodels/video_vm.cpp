@@ -25,11 +25,36 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QVariantMap>
 
 #include <algorithm>
 #include <cstring>
 #include <exception>
 #include <string>
+#include <vector>
+
+namespace {
+
+/// QML-friendly track list: each entry is {id, description, label}. `label` is
+/// display-ready with a 1-based ordinal ("Track 2 — pcm_s16le").
+QVariantList tracksToVariantList(const std::vector<aegisub_qt::MediaTrackInfo> &tracks) {
+    QVariantList list;
+    list.reserve(int(tracks.size()));
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        QVariantMap track;
+        track.insert(QStringLiteral("id"), tracks[i].id);
+        track.insert(QStringLiteral("description"),
+                     QString::fromStdString(tracks[i].description));
+        track.insert(QStringLiteral("label"),
+                     QStringLiteral("Track %1 \u2014 %2")
+                         .arg(int(i) + 1)
+                         .arg(QString::fromStdString(tracks[i].description)));
+        list.append(track);
+    }
+    return list;
+}
+
+} // namespace
 
 namespace {
 
@@ -121,11 +146,28 @@ void VideoViewModel::setAutoSeekToActiveLine(bool enabled) {
 
 bool VideoViewModel::openVideo(const QUrl &url) {
     if (url.isLocalFile())
-        return openLocalPath(url.toLocalFile());
-    return openLocalPath(url.toString());
+        return openLocalPathImpl(url.toLocalFile(), -1, true);
+    setError(QStringLiteral("Only local files are supported"));
+    return false;
 }
 
 bool VideoViewModel::openLocalPath(const QString &path) {
+    return openLocalPathImpl(path, -1, false);
+}
+
+bool VideoViewModel::openLocalPathWithTrack(const QString &path, int trackId) {
+    if (trackId < 0) {
+        setError(QStringLiteral("No video track selected"));
+        return false;
+    }
+    return openLocalPathImpl(path, trackId, false);
+}
+
+void VideoViewModel::cancelPendingTrackSelection() {
+    pending_track_path_.clear();
+}
+
+bool VideoViewModel::openLocalPathImpl(const QString &path, int trackId, bool interactive) {
     if (path.isEmpty()) {
         setError(QStringLiteral("No video path given"));
         return false;
@@ -139,8 +181,33 @@ bool VideoViewModel::openLocalPath(const QString &path) {
 
     ensureFfms2CacheDirectory();
 
+    // Two-phase track selection: probe the container first (cheap, no index),
+    // ask QML for a track if there is more than one and the caller is an
+    // interactive menu action, then open with the chosen ffms2 track id. The
+    // provider therefore never has to ask the user itself (no wx dialog).
+    std::string probe_error;
+    const auto tracks = aegisub_qt::VideoBridge::ProbeVideoTracks(
+        path.toUtf8().toStdString(), &probe_error);
+    if (tracks.empty() && !probe_error.empty()) {
+        setError(QString::fromStdString(probe_error));
+        return false;
+    }
+
+    int chosen_track = trackId;
+    if (chosen_track < 0) {
+        if (interactive && tracks.size() > 1) {
+            pending_track_path_ = info.absoluteFilePath();
+            emit trackSelectionRequired(pending_track_path_, QStringLiteral("video"),
+                                        tracksToVariantList(tracks));
+            return false;
+        }
+        if (!tracks.empty())
+            chosen_track = tracks.front().id;
+    }
+    pending_track_path_.clear();
+
     std::string error;
-    if (!bridge_->OpenFile(path.toUtf8().toStdString(), &error)) {
+    if (!bridge_->OpenFile(path.toUtf8().toStdString(), &error, chosen_track)) {
         setError(QString::fromStdString(error));
         return false;
     }
@@ -200,6 +267,11 @@ void VideoViewModel::closeVideo() {
     video_name_.clear();
     file_path_.clear();
     current_frame_ = -1;
+    pending_track_path_.clear();
+
+    keyframe_times_ms_.clear();
+    emit keyframeTimesChanged();
+    updateCurrentFrameIsKeyframe();
 
     emit hasVideoChanged();
     emit videoNameChanged();
@@ -318,9 +390,12 @@ void VideoViewModel::onVideoOpened(const QString &name) {
     playing_ = false;
     playback_timer_.stop();
     current_frame_ = -1;
+    pending_track_path_.clear();
 
     if (file_)
         bridge_->LoadSubtitles(file_);
+
+    rebuildKeyframes();
 
     emit hasVideoChanged();
     emit videoNameChanged();
@@ -344,10 +419,51 @@ void VideoViewModel::setCurrentFrame(int frame, bool redraw) {
     }
 
     current_frame_ = frame;
+    updateCurrentFrameIsKeyframe();
     emit currentFrameChanged();
 
     if (redraw)
         renderCurrentFrame();
+}
+
+QVariantList VideoViewModel::keyframeTimesMs() const {
+    QVariantList list;
+    list.reserve(int(keyframe_times_ms_.size()));
+    for (int ms : keyframe_times_ms_)
+        list.append(ms);
+    return list;
+}
+
+int VideoViewModel::keyframeCount() const {
+    return int(keyframe_times_ms_.size());
+}
+
+bool VideoViewModel::currentFrameIsKeyframe() const { return current_frame_is_keyframe_; }
+
+std::vector<int> const &VideoViewModel::keyframeTimesMsVector() const {
+    return keyframe_times_ms_;
+}
+
+void VideoViewModel::rebuildKeyframes() {
+    keyframe_times_ms_ = bridge_->GetKeyframeTimesMs();
+    emit keyframeTimesChanged();
+    updateCurrentFrameIsKeyframe();
+}
+
+void VideoViewModel::updateCurrentFrameIsKeyframe() {
+    bool is_keyframe = false;
+    if (hasVideo() && current_frame_ >= 0 && !keyframe_times_ms_.empty()) {
+        // The list stores agi::vfr::START times, so map the current frame the
+        // same way to get an exact hit for CFR and VFR alike.
+        const int ms = bridge_->TimeAtFrameStart(current_frame_);
+        is_keyframe = std::binary_search(keyframe_times_ms_.begin(),
+                                         keyframe_times_ms_.end(), ms);
+    }
+
+    if (is_keyframe == current_frame_is_keyframe_)
+        return;
+    current_frame_is_keyframe_ = is_keyframe;
+    emit currentFrameIsKeyframeChanged();
 }
 
 void VideoViewModel::renderCurrentFrame() {

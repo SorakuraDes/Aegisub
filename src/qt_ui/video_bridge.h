@@ -6,6 +6,8 @@
 // view models include this header from a translation unit where agi::signal's
 // `slots` member would otherwise clash with Qt's macros.
 
+#include "media_track_info.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,9 +36,17 @@ public:
     /// aegisub_qt::InitializeCore() to have run first.
     static void Initialize();
 
+    /// Enumerate the video tracks of a container without opening/decoding it.
+    /// An empty list means "no video track"; `error` is only set when the file
+    /// itself cannot be opened.
+    static std::vector<MediaTrackInfo> ProbeVideoTracks(std::string const &utf8_path,
+                                                       std::string *error);
+
     /// Open a real video file through FFmpegSource (wrapped in the frame
-    /// cache). Returns false and fills `error` on failure.
-    bool OpenFile(std::string const &utf8_path, std::string *error);
+    /// cache). `preferredTrack` is an ffms2 track id from ProbeVideoTracks();
+    /// -1 means "auto-select the first video track" and never shows a dialog.
+    /// Returns false and fills `error` on failure.
+    bool OpenFile(std::string const &utf8_path, std::string *error, int preferredTrack = -1);
     /// Open the dummy (checkerboard) video without touching the filesystem.
     bool OpenDummy(int width, int height, double fps, int frame_count, std::string *error);
     void Close();
@@ -84,6 +94,10 @@ public:
     int FrameHeight() const;
     /// True when the provider's buffer is bottom-up and needs a vertical flip.
     bool FrameFlipped() const;
+
+    /// Keyframe start times in milliseconds (ascending, no duplicates).
+    /// Empty for the dummy video and for containers without keyframe info.
+    std::vector<int> const &GetKeyframeTimesMs() const;
 
 private:
     struct Impl;

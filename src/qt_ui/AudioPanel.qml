@@ -51,8 +51,8 @@ Item {
                     implicitHeight: 24
                     topPadding: 0
                     bottomPadding: 0
-                    leftPadding: 8
-                    rightPadding: 8
+                    leftPadding: 6
+                    rightPadding: 6
                     enabled: audioVM.hasAudio && audioVM.isPlaying
                     onClicked: audioVM.stop()
                 }
@@ -83,28 +83,56 @@ Item {
                     onClicked: audioVM.zoomBy(1.25)
                 }
 
+                CheckBox {
+                    text: i18n.t("Snap KF")
+                    font.pixelSize: 9
+                    spacing: 2
+                    implicitHeight: 24
+                    topPadding: 0
+                    bottomPadding: 0
+                    leftPadding: 0
+                    rightPadding: 0
+                    checked: audioVM.snapToKeyframes
+                    enabled: audioVM.keyframeCount > 0
+                    onToggled: audioVM.snapToKeyframes = checked
+                }
+
                 Label {
                     text: audioVM.formatTime(audioVM.activeStartMs) + " \u2192 "
                           + audioVM.formatTime(audioVM.activeEndMs)
-                    font.pixelSize: 11
+                    font.pixelSize: 10
                     font.family: "Consolas"
                     color: "#e0e0e0"
-                    Layout.preferredWidth: 168
+                    elide: Text.ElideRight
+                    Layout.preferredWidth: 150
+                    // Responsive: the dual-panel layout is too narrow for the
+                    // time range; keep the track/player status readable there.
+                    visible: root.width > 700
                 }
 
-                Item { Layout.fillWidth: true }
+                Label {
+                    objectName: "audioTrackLabel"
+                    text: audioVM.trackLabel
+                    font.pixelSize: 10
+                    color: "#b388ff"
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: 120
+                    visible: audioVM.trackLabel.length > 0 && root.width > 620
+                }
 
                 Label {
                     text: audioVM.playerStatus
                     font.pixelSize: 10
                     color: "#8a8a8a"
                     elide: Text.ElideRight
-                    Layout.maximumWidth: 260
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.maximumWidth: 180
                     visible: audioVM.hasAudio && audioVM.playerStatus.length > 0
                 }
 
                 Slider {
-                    Layout.preferredWidth: 96
+                    Layout.preferredWidth: 80
                     from: 0
                     to: 1
                     value: audioVM.volume

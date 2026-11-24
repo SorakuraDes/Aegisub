@@ -83,10 +83,14 @@ ass_qt_core = static_library('ass_qt_core',
 # for the Qt process. They are unchanged originals (src/ is off limits); the
 # only Qt-specific pieces are the wx-free bridge and the synchronous background
 # runner. A wx precompiled header is required because the originals still use wx
-# helpers (wxString formatting, the multi-track selection dialog).
+# helpers (wxString formatting).
+#
+# ffmpegsource_common_qt.cpp is the Qt copy of src/ffmpegsource_common.cpp: it
+# replaces the original because its AskForTrackSelection() would pop the
+# wxWidgets track choice dialog from the Qt process (Stage 11B).
 av_qt_core = static_library('av_qt_core',
     files(
-        '../ffmpegsource_common.cpp',
+        'ffmpegsource_common_qt.cpp',
         '../video_provider_ffmpegsource.cpp',
         '../video_provider_dummy.cpp',
         '../video_provider_cache.cpp',

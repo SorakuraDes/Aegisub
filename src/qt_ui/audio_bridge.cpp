@@ -4,6 +4,8 @@
 
 #include "audio_bridge.h"
 
+#include "ffmpegsource_common_qt.h"
+
 #include "include/aegisub/audio_player.h"
 #include "qt_background_runner.h"
 
@@ -67,8 +69,28 @@ void ensureCacheDirectory() {
 #endif
 }
 
-/// Synthetic audio used by the "Use Dummy Audio" action.
-///
+/// Installs the ffms2 track selector for the duration of one provider creation.
+/// The Qt copy of FFmpegSourceProvider::AskForTrackSelection() consults it
+/// instead of popping the original wxWidgets choice dialog.
+class TrackSelectorGuard {
+public:
+    explicit TrackSelectorGuard(int preferred_track) {
+        SetTrackSelector(
+            [preferred_track](MediaKind,
+                              const std::vector<MediaTrackInfo> &tracks) {
+                if (preferred_track >= 0)
+                    return preferred_track;
+                return tracks.empty() ? -1 : tracks.front().id;
+            });
+    }
+
+    ~TrackSelectorGuard() { ClearTrackSelector(); }
+
+    TrackSelectorGuard(TrackSelectorGuard const &) = delete;
+    TrackSelectorGuard &operator=(TrackSelectorGuard const &) = delete;
+};
+
+/// Synthetic audio used by the "Use Dummy Audio" action.///
 /// The stock agi::AudioProvider dummy supports only silence/noise and ignores
 /// its documented `ln` parameter (it always reports 2.5 hours), which makes it
 /// useless for a waveform check. This provider generates a 440 Hz sine with a
@@ -151,11 +173,15 @@ AudioBridge::AudioBridge()
 
 AudioBridge::~AudioBridge() = default;
 
-bool AudioBridge::OpenFile(std::string const &utf8_path, std::string *error) {
+bool AudioBridge::OpenFile(std::string const &utf8_path, std::string *error,
+                           int preferredTrack) {
     Close();
     ensureCacheDirectory();
 
     try {
+        // Multi-track files choose the track through the injected selector, so
+        // no wx dialog is ever created from the Qt process.
+        TrackSelectorGuard selector(preferredTrack);
         auto provider = CreateFFmpegSourceAudioProvider(pathFromUtf8(utf8_path),
                                                         impl_->runner.get());
         if (!provider) {
@@ -224,6 +250,13 @@ void AudioBridge::Close() {
     impl_->fallback_start = 0;
     impl_->fallback_end = 0;
     impl_->status = "No audio output";
+}
+
+std::vector<MediaTrackInfo> AudioBridge::ProbeAudioTracks(std::string const &utf8_path,
+                                                          std::string *error) {
+    std::vector<MediaTrackInfo> tracks;
+    ProbeTracks(utf8_path, MediaKind::Audio, &tracks, error);
+    return tracks;
 }
 
 bool AudioBridge::IsOpen() const { return impl_->provider != nullptr; }

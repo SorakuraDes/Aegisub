@@ -11,6 +11,7 @@
 #include <QString>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantList>
 
 #include <cstdint>
 #include <vector>
@@ -43,6 +44,14 @@ class AudioViewModel final : public QObject {
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     /// "XAudio2" or the reason the wall-clock silent fallback is active.
     Q_PROPERTY(QString playerStatus READ playerStatus NOTIFY playerStatusChanged)
+    /// Display-ready description of the selected track ("Track 2 — pcm_s16le");
+    /// empty for single-track files and the synthetic dummy audio.
+    Q_PROPERTY(QString trackLabel READ trackLabel NOTIFY audioChanged)
+    /// Snap waveform Start/End edits to the nearest video keyframe.
+    Q_PROPERTY(bool snapToKeyframes READ snapToKeyframes WRITE setSnapToKeyframes
+                   NOTIFY snapToKeyframesChanged)
+    /// Number of keyframe times received from the video view model.
+    Q_PROPERTY(int keyframeCount READ keyframeCount NOTIFY keyframeTimesChanged)
 
 public:
     AudioViewModel(AssFile *file, SubtitleGridModel *gridModel, UndoManager *undoManager,
@@ -63,6 +72,17 @@ public:
     void setVolume(double volume);
     QString lastError() const;
     QString playerStatus() const;
+    QString trackLabel() const;
+    bool snapToKeyframes() const;
+    void setSnapToKeyframes(bool enabled);
+    int keyframeCount() const;
+
+    /// Keyframe start times (ms, ascending) from the open video.
+    void setKeyframeTimesMs(const std::vector<int> &times);
+    std::vector<int> const &keyframeTimesMs() const;
+    /// Nearest keyframe within `toleranceMs` of `targetMs` (binary search), or
+    /// -1 when there is none in range.
+    int nearestKeyframeMs(int targetMs, int toleranceMs) const;
 
     Q_INVOKABLE bool openAudio(const QUrl &url);
     Q_INVOKABLE bool openLocalPath(const QString &path);
@@ -71,6 +91,13 @@ public:
     /// silent (no error banner) because videos without an audio track are a
     /// perfectly normal case.
     Q_INVOKABLE bool openLocalPathQuiet(const QString &path);
+    /// Open a specific ffms2 audio track id (from the Qt track picker).
+    Q_INVOKABLE bool openLocalPathWithTrack(const QString &path, int trackId);
+    /// Re-open the current file through the track picker ("Select Audio Track").
+    /// Single-track files are re-opened directly without any dialog.
+    Q_INVOKABLE bool openAudioTrackPicker();
+    /// The user cancelled the track picker: drop the pending request.
+    Q_INVOKABLE void cancelPendingTrackSelection();
     Q_INVOKABLE bool openDummyAudio();
     Q_INVOKABLE void closeAudio();
 
@@ -116,8 +143,15 @@ signals:
     void volumeChanged();
     void lastErrorChanged();
     void playerStatusChanged();
+    void snapToKeyframesChanged();
+    void keyframeTimesChanged();
+    /// Multi-track file: ask QML to show the track picker. `tracks` is a list of
+    /// {id:int, description:string, label:string} maps (label is display-ready).
+    void trackSelectionRequired(const QString &path, const QString &mediaKind,
+                                const QVariantList &tracks);
 
 private:
+    bool openLocalPathImpl(const QString &path, int trackId, bool interactive, bool quiet);
     void refreshActiveTimes();
     void setError(const QString &message);
     void resetError();
@@ -136,6 +170,12 @@ private:
 
     QString audio_name_;
     QString last_error_;
+    QString source_path_;
+    QString track_label_;
+    QString pending_track_path_;
+    int source_track_count_ = 0;
+    std::vector<int> keyframe_times_ms_;
+    bool snap_to_keyframes_ = true;
     int active_start_ms_ = 0;
     int active_end_ms_ = 0;
     int view_start_ms_ = 0;

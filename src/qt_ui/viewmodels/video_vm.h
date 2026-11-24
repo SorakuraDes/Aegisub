@@ -10,8 +10,10 @@
 #include <QString>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantList>
 
 #include <memory>
+#include <vector>
 
 class AssDialogue;
 class AssFile;
@@ -51,6 +53,12 @@ class VideoViewModel final : public QObject {
     /// selection changes.
     Q_PROPERTY(bool autoSeekToActiveLine READ autoSeekToActiveLine WRITE
                    setAutoSeekToActiveLine NOTIFY autoSeekToActiveLineChanged)
+    /// Keyframe start times in milliseconds, as a QML-friendly list.
+    Q_PROPERTY(QVariantList keyframeTimesMs READ keyframeTimesMs NOTIFY keyframeTimesChanged)
+    Q_PROPERTY(int keyframeCount READ keyframeCount NOTIFY keyframeTimesChanged)
+    /// True when the current frame is a keyframe (drives the KF badge).
+    Q_PROPERTY(bool currentFrameIsKeyframe READ currentFrameIsKeyframe
+                   NOTIFY currentFrameIsKeyframeChanged)
 
 public:
     VideoViewModel(AssFile *file, SubtitleGridModel *gridModel, UndoManager *undoManager,
@@ -72,6 +80,12 @@ public:
     bool autoSeekToActiveLine() const;
     void setAutoSeekToActiveLine(bool enabled);
 
+    QVariantList keyframeTimesMs() const;
+    int keyframeCount() const;
+    bool currentFrameIsKeyframe() const;
+    /// Raw keyframe list for main.cpp (wired into AudioViewModel).
+    std::vector<int> const &keyframeTimesMsVector() const;
+
     /// Connect the audio view model for A/V-synchronised playback.
     ///
     /// Deliberately not a Q_INVOKABLE: main.cpp owns both view models and calls
@@ -85,9 +99,18 @@ public:
     Q_INVOKABLE int timeAtFrameMs(int frame, bool end) const;
 
     /// Open a video file picked by QML's FileDialog.
+    ///
+    /// When the file has more than one video track this does not open it: a
+    /// `trackSelectionRequired` signal asks QML to show the Qt track picker, and
+    /// the chosen track comes back through openLocalPathWithTrack().
     Q_INVOKABLE bool openVideo(const QUrl &url);
-    /// Open a video file by local path (ffms2 formats).
+    /// Open a video file by local path (ffms2 formats), auto-selecting the
+    /// first video track (command line / tests; never shows a picker).
     Q_INVOKABLE bool openLocalPath(const QString &path);
+    /// Open a specific ffms2 video track id (from the track picker).
+    Q_INVOKABLE bool openLocalPathWithTrack(const QString &path, int trackId);
+    /// The user cancelled the track picker: drop the pending request.
+    Q_INVOKABLE void cancelPendingTrackSelection();
     /// Open the placeholder/checkerboard video. Parameters <= 0 mean "use the
     /// script's PlayResX/PlayResY, then the 1280x720 / 23.976 fps / 36000 frame
     /// defaults".
@@ -112,11 +135,21 @@ signals:
     void isPlayingChanged();
     void lastErrorChanged();
     void autoSeekToActiveLineChanged();
+    void keyframeTimesChanged();
+    void currentFrameIsKeyframeChanged();
+    /// Multi-track file: ask QML to show the track picker. `tracks` is a list of
+    /// {id:int, description:string, label:string} maps (label is display-ready,
+    /// e.g. "Track 2 — pcm_s16le").
+    void trackSelectionRequired(const QString &path, const QString &mediaKind,
+                                const QVariantList &tracks);
     /// Delivers the fully composited (video + subtitles) frame to the viewport.
     void frameReady(const QImage &frame);
 
 private:
+    bool openLocalPathImpl(const QString &path, int trackId, bool interactive);
     void onVideoOpened(const QString &name);
+    void rebuildKeyframes();
+    void updateCurrentFrameIsKeyframe();
     void setCurrentFrame(int frame, bool redraw);
     void renderCurrentFrame();
     void setError(const QString &message);
@@ -145,9 +178,12 @@ private:
     QString video_name_;
     QString file_path_;
     QString last_error_;
+    QString pending_track_path_;
     int current_frame_ = -1;
     bool playing_ = false;
     bool auto_seek_ = true;
+    bool current_frame_is_keyframe_ = false;
+    std::vector<int> keyframe_times_ms_;
     /// True while playback is clocked by the audio player instead of the wall
     /// clock (audio track open and playFrom() succeeded).
     bool audio_sync_ = false;

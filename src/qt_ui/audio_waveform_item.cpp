@@ -25,6 +25,9 @@ QColor kSelection(79, 195, 247, 36);
 QColor kStartLine("#ff5252");
 QColor kEndLine("#448aff");
 QColor kPlayhead("#ffffff");
+/// Video keyframes: soft purple, drawn above the waveform but below the red/blue
+/// timing lines so they guide snapping without stealing attention.
+QColor kKeyframeLine(179, 136, 255, 140);
 
 QString formatTick(double milliseconds, double step_ms) {
     const int ms = int(std::max(0.0, milliseconds));
@@ -83,6 +86,8 @@ void AudioWaveformItem::setViewModel(QObject *view_model) {
         connect(vm_, &AudioViewModel::activeTimesChanged, this, [this] { update(); });
         connect(vm_, &AudioViewModel::playbackTimeChanged, this, [this] { update(); });
         connect(vm_, &AudioViewModel::playingChanged, this, [this] { update(); });
+        connect(vm_, &AudioViewModel::keyframeTimesChanged, this, [this] { update(); });
+        connect(vm_, &AudioViewModel::snapToKeyframesChanged, this, [this] { update(); });
 
         if (width() > 0)
             vm_->setViewportWidthPx(int(width()));
@@ -120,6 +125,18 @@ int AudioWaveformItem::visibleMs() const {
         return 1000;
     const double zoom = std::max(1.0, vm_->zoomPxPerSec());
     return std::max(1000, int(width() * 1000.0 / zoom));
+}
+
+int AudioWaveformItem::snappedMs(int ms, Qt::KeyboardModifiers modifiers) const {
+    if (!vm_ || !vm_->snapToKeyframes())
+        return ms;
+    if (modifiers.testFlag(Qt::ShiftModifier))
+        return ms;
+
+    const double zoom = std::max(1.0, vm_->zoomPxPerSec());
+    const int tolerance_ms = int(std::ceil(kGrabRadiusPx * 1000.0 / zoom));
+    const int nearest = vm_->nearestKeyframeMs(ms, tolerance_ms);
+    return nearest >= 0 ? nearest : ms;
 }
 
 void AudioWaveformItem::invalidatePeaks() { peaks_valid_ = false; }
@@ -248,6 +265,26 @@ void AudioWaveformItem::paint(QPainter *painter) {
         }
     }
 
+    // ---- Keyframes -------------------------------------------------------
+    // Only the keyframes inside the visible range are drawn; the list is sorted
+    // so a binary search finds the first visible one in O(log N).
+    if (vm_->keyframeCount() > 0) {
+        const auto &keyframes = vm_->keyframeTimesMs();
+        const int view_begin = vm_->viewStartMs();
+        const int view_end = view_begin + visibleMs();
+        auto it = std::lower_bound(keyframes.begin(), keyframes.end(), view_begin);
+        QPen keyframe_pen(kKeyframeLine);
+        keyframe_pen.setWidthF(1.0);
+        keyframe_pen.setCosmetic(true);
+        painter->setPen(keyframe_pen);
+        for (; it != keyframes.end() && *it <= view_end; ++it) {
+            const double x = msToX(*it);
+            if (x < 0 || x > w)
+                continue;
+            painter->drawLine(QPointF(x, kRulerHeight), QPointF(x, h));
+        }
+    }
+
     // ---- Playhead --------------------------------------------------------
     if (vm_->isPlaying()) {
         const double x = msToX(vm_->playbackTimeMs());
@@ -284,6 +321,9 @@ void AudioWaveformItem::mousePressEvent(QMouseEvent *event) {
     const double ms = std::clamp(xToMs(x), 0.0, double(std::max(1, vm_->durationMs())));
     const int duration = std::max(1, vm_->durationMs());
     const int clicked_ms = int(std::clamp(ms, 0.0, double(duration)));
+    // Snapping only affects the value that will be written, not the hit test
+    // against the existing red/blue lines.
+    const int snapped_clicked_ms = snappedMs(clicked_ms, event->modifiers());
 
     const int active_start = vm_->activeStartMs();
     const int active_end = vm_->activeEndMs();
@@ -296,7 +336,7 @@ void AudioWaveformItem::mousePressEvent(QMouseEvent *event) {
 
     if (event->button() == Qt::RightButton) {
         drag_edge_ = DragEdge::End;
-        preview_end_ms_ = std::max(clicked_ms, preview_start_ms_);
+        preview_end_ms_ = std::max(snapped_clicked_ms, preview_start_ms_);
     } else if (event->button() == Qt::LeftButton) {
         if (near_start) {
             drag_edge_ = DragEdge::Start;
@@ -306,7 +346,7 @@ void AudioWaveformItem::mousePressEvent(QMouseEvent *event) {
             // Clicking empty space sets the new start; clamping against the end
             // keeps the range ordered (same feel as the wxWidgets audio display).
             drag_edge_ = DragEdge::Start;
-            preview_start_ms_ = std::min(clicked_ms, preview_end_ms_);
+            preview_start_ms_ = std::min(snapped_clicked_ms, preview_end_ms_);
         }
     } else {
         QQuickPaintedItem::mousePressEvent(event);
@@ -325,7 +365,8 @@ void AudioWaveformItem::mouseMoveEvent(QMouseEvent *event) {
     }
 
     const int duration = std::max(1, vm_->durationMs());
-    const int ms = int(std::clamp(xToMs(event->position().x()), 0.0, double(duration)));
+    int ms = int(std::clamp(xToMs(event->position().x()), 0.0, double(duration)));
+    ms = std::clamp(snappedMs(ms, event->modifiers()), 0, duration);
 
     if (drag_edge_ == DragEdge::Start)
         preview_start_ms_ = std::min(ms, preview_end_ms_);

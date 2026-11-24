@@ -239,6 +239,11 @@ int main(int argc, char *argv[]) {
     QObject::connect(&documentVM, &DocumentViewModel::documentReloaded,
                      &audioVM, &AudioViewModel::handleDocumentReload);
 
+    // Stage 11B: video keyframes drive the waveform overlay and the snapping.
+    QObject::connect(&videoVM, &VideoViewModel::keyframeTimesChanged, &audioVM, [&] {
+        audioVM.setKeyframeTimesMs(videoVM.keyframeTimesMsVector());
+    });
+
     UndoShortcutFilter undoFilter(&undoManager);
     app.installEventFilter(&undoFilter);
 

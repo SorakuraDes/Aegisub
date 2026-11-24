@@ -19,6 +19,7 @@ ApplicationWindow {
     property var searchWindow: null
     property var stylesWindow: null
     property var shiftTimesWindow: null
+    property var trackPickerWindow: null
 
     // Pending File-menu action while the unsaved-changes dialog is up, and the
     // action to resume once a (possibly Save As) save finished.
@@ -116,6 +117,35 @@ ApplicationWindow {
         shiftTimesWindow.requestActivate()
     }
 
+    // Qt track picker for multi-track video/audio containers. The view models
+    // probe the file first and only ask for this window when there is a real
+    // choice (see TrackPickerDialog.qml).
+    function openTrackPicker(path, kind, tracks) {
+        if (trackPickerWindow === null) {
+            var component = Qt.createComponent("qrc:/TrackPickerDialog.qml")
+            if (component.status !== Component.Ready) {
+                console.error("Failed to load TrackPickerDialog.qml", component.errorString())
+                return
+            }
+            trackPickerWindow = component.createObject(null)
+        }
+        trackPickerWindow.openFor(path, kind, tracks)
+    }
+
+    Connections {
+        target: videoVM
+        function onTrackSelectionRequired(path, kind, tracks) {
+            mainWindow.openTrackPicker(path, kind, tracks)
+        }
+    }
+
+    Connections {
+        target: audioVM
+        function onTrackSelectionRequired(path, kind, tracks) {
+            mainWindow.openTrackPicker(path, kind, tracks)
+        }
+    }
+
     function closeChildWindows() {
         if (searchWindow !== null) {
             searchWindow.close()
@@ -128,6 +158,10 @@ ApplicationWindow {
         if (shiftTimesWindow !== null) {
             shiftTimesWindow.close()
             shiftTimesWindow = null
+        }
+        if (trackPickerWindow !== null) {
+            trackPickerWindow.close()
+            trackPickerWindow = null
         }
         if (aboutWindow !== null) {
             aboutWindow.close()
@@ -448,6 +482,12 @@ ApplicationWindow {
             ShortcutMenuItem {
                 text: i18n.t("Use Dummy Audio")
                 onTriggered: audioVM.openDummyAudio()
+            }
+            MenuSeparator {}
+            ShortcutMenuItem {
+                text: i18n.t("Select Audio Track...")
+                enabled: audioVM.hasAudio
+                onTriggered: audioVM.openAudioTrackPicker()
             }
             MenuSeparator {}
             ShortcutMenuItem {

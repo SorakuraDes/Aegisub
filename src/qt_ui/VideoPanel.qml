@@ -84,14 +84,34 @@ Item {
                     onMoved: videoVM.seekFrame(value)
                 }
 
-                Label {
-                    text: "Frame " + (videoVM.currentFrame + 1) + " / " + videoVM.frameCount
-                          + "   " + videoVM.currentTimeText
-                    font.pixelSize: 11
-                    font.family: "Consolas"
-                    color: "#e0e0e0"
+                Item {
+                    // Keeps the bar exactly as wide as in Stage 11A: the frame
+                    // label and the KF badge live in the same 210 px slot.
                     Layout.preferredWidth: 210
-                    horizontalAlignment: Text.AlignRight
+                    implicitHeight: 16
+
+                    Label {
+                        anchors.fill: parent
+                        text: "Frame " + (videoVM.currentFrame + 1) + " / " + videoVM.frameCount
+                              + "   " + videoVM.currentTimeText
+                        font.pixelSize: 11
+                        font.family: "Consolas"
+                        color: "#e0e0e0"
+                        horizontalAlignment: Text.AlignRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    Label {
+                        // Empty when the current frame is not a keyframe, so the
+                        // badge never affects the layout and UIA only sees "KF"
+                        // on keyframes.
+                        text: videoVM.currentFrameIsKeyframe ? "KF" : ""
+                        font.pixelSize: 10
+                        font.bold: true
+                        color: "#b388ff"
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
                 }
 
                 CheckBox {

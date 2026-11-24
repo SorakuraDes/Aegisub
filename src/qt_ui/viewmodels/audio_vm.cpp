@@ -16,11 +16,49 @@
 
 #include <QFileInfo>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
+#include <limits>
 #include <string>
+#include <vector>
+
+namespace {
+
+/// QML-friendly track list: each entry is {id, description, label}. `label` is
+/// display-ready with a 1-based ordinal ("Track 2 — pcm_s16le").
+QVariantList tracksToVariantList(const std::vector<aegisub_qt::MediaTrackInfo> &tracks) {
+    QVariantList list;
+    list.reserve(int(tracks.size()));
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        QVariantMap track;
+        track.insert(QStringLiteral("id"), tracks[i].id);
+        track.insert(QStringLiteral("description"),
+                     QString::fromStdString(tracks[i].description));
+        track.insert(QStringLiteral("label"),
+                     QStringLiteral("Track %1 \u2014 %2")
+                         .arg(int(i) + 1)
+                         .arg(QString::fromStdString(tracks[i].description)));
+        list.append(track);
+    }
+    return list;
+}
+
+QString describeTrack(const std::vector<aegisub_qt::MediaTrackInfo> &tracks, int trackId) {
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        if (tracks[i].id == trackId) {
+            return QStringLiteral("Track %1 \u2014 %2")
+                .arg(int(i) + 1)
+                .arg(QString::fromStdString(tracks[i].description));
+        }
+    }
+    return QString();
+}
+
+} // namespace
 
 AudioViewModel::AudioViewModel(AssFile *file, SubtitleGridModel *gridModel,
                                UndoManager *undoManager, QObject *parent)
@@ -63,6 +101,56 @@ QString AudioViewModel::playerStatus() const {
     return QString::fromStdString(bridge_.PlayerStatus());
 }
 
+QString AudioViewModel::trackLabel() const { return track_label_; }
+
+bool AudioViewModel::snapToKeyframes() const { return snap_to_keyframes_; }
+
+void AudioViewModel::setSnapToKeyframes(bool enabled) {
+    if (snap_to_keyframes_ == enabled)
+        return;
+    snap_to_keyframes_ = enabled;
+    emit snapToKeyframesChanged();
+}
+
+int AudioViewModel::keyframeCount() const { return int(keyframe_times_ms_.size()); }
+
+void AudioViewModel::setKeyframeTimesMs(const std::vector<int> &times) {
+    std::vector<int> sorted = times;
+    std::sort(sorted.begin(), sorted.end());
+    sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+    if (sorted == keyframe_times_ms_)
+        return;
+    keyframe_times_ms_.swap(sorted);
+    emit keyframeTimesChanged();
+}
+
+std::vector<int> const &AudioViewModel::keyframeTimesMs() const {
+    return keyframe_times_ms_;
+}
+
+int AudioViewModel::nearestKeyframeMs(int targetMs, int toleranceMs) const {
+    if (keyframe_times_ms_.empty() || toleranceMs < 0)
+        return -1;
+
+    auto it = std::lower_bound(keyframe_times_ms_.begin(), keyframe_times_ms_.end(),
+                               targetMs);
+    int best = -1;
+    int best_distance = std::numeric_limits<int>::max();
+    if (it != keyframe_times_ms_.end()) {
+        best = *it;
+        best_distance = std::abs(*it - targetMs);
+    }
+    if (it != keyframe_times_ms_.begin()) {
+        --it;
+        const int distance = std::abs(*it - targetMs);
+        if (distance < best_distance) {
+            best = *it;
+            best_distance = distance;
+        }
+    }
+    return best_distance <= toleranceMs ? best : -1;
+}
+
 void AudioViewModel::setVolume(double volume) {
     const double clamped = std::clamp(volume, 0.0, 1.0);
     if (volume_ == clamped)
@@ -74,46 +162,13 @@ void AudioViewModel::setVolume(double volume) {
 
 bool AudioViewModel::openAudio(const QUrl &url) {
     if (url.isLocalFile())
-        return openLocalPath(url.toLocalFile());
-    return openLocalPath(url.toString());
+        return openLocalPathImpl(url.toLocalFile(), -1, true, false);
+    setError(QStringLiteral("Only local files are supported"));
+    return false;
 }
 
 bool AudioViewModel::openLocalPath(const QString &path) {
-    if (path.isEmpty()) {
-        setError(QStringLiteral("No audio path given"));
-        return false;
-    }
-
-    const QFileInfo info(path);
-    if (!info.isFile()) {
-        setError(QStringLiteral("Audio file not found: ") + path);
-        return false;
-    }
-
-    stopPlayback();
-
-    std::string error;
-    if (!bridge_.OpenFile(path.toUtf8().toStdString(), &error)) {
-        audio_name_.clear();
-        setError(QString::fromStdString(error));
-        emit audioChanged();
-        emit playerStatusChanged();
-        return false;
-    }
-
-    audio_name_ = info.fileName();
-    view_start_ms_ = 0;
-    playback_time_ms_ = 0;
-    resetError();
-    refreshActiveTimes();
-    centerOnActiveLine();
-
-    emit audioChanged();
-    emit playerStatusChanged();
-    emit activeTimesChanged();
-    emit viewChanged();
-    emit playbackTimeChanged();
-    return true;
+    return openLocalPathImpl(path, -1, false, false);
 }
 
 bool AudioViewModel::openLocalPathQuiet(const QString &path) {
@@ -122,23 +177,111 @@ bool AudioViewModel::openLocalPathQuiet(const QString &path) {
     // model calls this for every real video it opens).
     if (hasAudio())
         return false;
+    return openLocalPathImpl(path, -1, false, true);
+}
 
-    if (path.isEmpty() || !QFileInfo(path).isFile())
+bool AudioViewModel::openLocalPathWithTrack(const QString &path, int trackId) {
+    if (trackId < 0) {
+        setError(QStringLiteral("No audio track selected"));
         return false;
+    }
+    return openLocalPathImpl(path, trackId, false, false);
+}
+
+bool AudioViewModel::openAudioTrackPicker() {
+    if (!hasAudio() || source_path_.isEmpty())
+        return false;
+
+    std::string probe_error;
+    const auto tracks = aegisub_qt::AudioBridge::ProbeAudioTracks(
+        source_path_.toUtf8().toStdString(), &probe_error);
+    if (tracks.size() > 1) {
+        pending_track_path_ = source_path_;
+        emit trackSelectionRequired(pending_track_path_, QStringLiteral("audio"),
+                                    tracksToVariantList(tracks));
+        return true;
+    }
+
+    // Single-track (or unprobeable) file: just re-open it, no dialog.
+    const int only_track = tracks.empty() ? -1 : tracks.front().id;
+    return openLocalPathImpl(source_path_, only_track, false, false);
+}
+
+void AudioViewModel::cancelPendingTrackSelection() {
+    pending_track_path_.clear();
+}
+
+bool AudioViewModel::openLocalPathImpl(const QString &path, int trackId, bool interactive,
+                                       bool quiet) {
+    if (path.isEmpty()) {
+        if (!quiet)
+            setError(QStringLiteral("No audio path given"));
+        return false;
+    }
+
+    const QFileInfo info(path);
+    if (!info.isFile()) {
+        if (!quiet)
+            setError(QStringLiteral("Audio file not found: ") + path);
+        return false;
+    }
+
+    // Two-phase track selection (see VideoViewModel::openLocalPathImpl): probe
+    // the container, ask QML when interactive and multi-track, then open the
+    // chosen ffms2 track id. The provider never shows a wx dialog.
+    std::string probe_error;
+    const auto tracks = aegisub_qt::AudioBridge::ProbeAudioTracks(
+        path.toUtf8().toStdString(), &probe_error);
+    if (tracks.empty()) {
+        if (quiet) {
+            LOG_D("qt/audio") << "automatic audio load skipped:"
+                              << (probe_error.empty() ? "no audio tracks" : probe_error);
+            return false;
+        }
+        setError(probe_error.empty() ? QStringLiteral("No audio tracks found")
+                                     : QString::fromStdString(probe_error));
+        return false;
+    }
+
+    int chosen_track = trackId;
+    if (chosen_track < 0) {
+        if (interactive && tracks.size() > 1) {
+            pending_track_path_ = info.absoluteFilePath();
+            emit trackSelectionRequired(pending_track_path_, QStringLiteral("audio"),
+                                        tracksToVariantList(tracks));
+            return false;
+        }
+        chosen_track = tracks.front().id;
+    }
+    pending_track_path_.clear();
 
     stopPlayback();
 
     std::string error;
-    if (!bridge_.OpenFile(path.toUtf8().toStdString(), &error)) {
-        // AudioBridge::OpenFile() closes itself on failure. Leave last_error_
-        // untouched so the failed auto-load does not raise the error banner.
-        LOG_D("qt/audio") << "automatic audio load skipped:" << error;
+    if (!bridge_.OpenFile(path.toUtf8().toStdString(), &error, chosen_track)) {
+        // AudioBridge::OpenFile() closes itself on failure.
+        if (quiet) {
+            LOG_D("qt/audio") << "automatic audio load skipped:" << error;
+            return false;
+        }
+        audio_name_.clear();
+        source_path_.clear();
+        track_label_.clear();
+        source_track_count_ = 0;
+        setError(QString::fromStdString(error));
+        emit audioChanged();
+        emit playerStatusChanged();
         return false;
     }
 
-    audio_name_ = QFileInfo(path).fileName();
+    audio_name_ = info.fileName();
+    source_path_ = info.absoluteFilePath();
+    source_track_count_ = int(tracks.size());
+    track_label_ = tracks.size() > 1 ? describeTrack(tracks, chosen_track) : QString();
     view_start_ms_ = 0;
     playback_time_ms_ = 0;
+    if (!quiet)
+        resetError();
     refreshActiveTimes();
     centerOnActiveLine();
 
@@ -160,6 +303,9 @@ bool AudioViewModel::openDummyAudio() {
     }
 
     audio_name_ = QStringLiteral("Dummy audio (10 s, 440 Hz sine)");
+    source_path_.clear();
+    track_label_.clear();
+    source_track_count_ = 0;
     view_start_ms_ = 0;
     playback_time_ms_ = 0;
     resetError();
@@ -178,6 +324,10 @@ void AudioViewModel::closeAudio() {
     stopPlayback();
     bridge_.Close();
     audio_name_.clear();
+    source_path_.clear();
+    track_label_.clear();
+    source_track_count_ = 0;
+    pending_track_path_.clear();
     playback_time_ms_ = 0;
     view_start_ms_ = 0;
     zoom_px_per_sec_ = 100.0;

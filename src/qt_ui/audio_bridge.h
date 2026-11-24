@@ -5,6 +5,8 @@
 // wx helpers for its multi-track dialog), while the Qt view models only see this
 // header, which includes neither wxWidgets nor Qt.
 
+#include "media_track_info.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -28,9 +30,17 @@ public:
     AudioBridge(AudioBridge const &) = delete;
     AudioBridge &operator=(AudioBridge const &) = delete;
 
+    /// Enumerate the audio tracks of a container without opening/decoding it.
+    /// An empty list means "no audio track"; `error` is only set when the file
+    /// itself cannot be opened.
+    static std::vector<MediaTrackInfo> ProbeAudioTracks(std::string const &utf8_path,
+                                                       std::string *error);
+
     /// Open a real audio (or audio+video) file: FFmpegSource -> S16 mono
-    /// conversion -> RAM/HD cache (per Audio/Cache/Type).
-    bool OpenFile(std::string const &utf8_path, std::string *error);
+    /// conversion -> RAM/HD cache (per Audio/Cache/Type). `preferredTrack` is an
+    /// ffms2 track id from ProbeAudioTracks(); -1 auto-selects the first audio
+    /// track and never shows a dialog.
+    bool OpenFile(std::string const &utf8_path, std::string *error, int preferredTrack = -1);
     /// Open a synthetic 440 Hz sine (no file needed; used by the automated
     /// checks). The stock DummyAudioProvider ignores its `ln` parameter and only
     /// produces silence/noise, so the bridge synthesises its own signal.

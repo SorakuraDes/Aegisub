@@ -9,6 +9,7 @@
     <file>SearchDialog.qml</file>
     <file>StylesWindow.qml</file>
     <file>ShiftTimesDialog.qml</file>
+    <file>TrackPickerDialog.qml</file>
     <file>ShortcutMenuItem.qml</file>
     <file>VideoPanel.qml</file>
     <file>AudioPanel.qml</file>

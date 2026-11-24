@@ -44,6 +44,9 @@ private:
     double xToMs(double x) const;
     double msToX(double ms) const;
     int visibleMs() const;
+    /// Snap `ms` to the nearest video keyframe when snapping is enabled and
+    /// Shift is not held (tolerance: 6 px converted to ms at the current zoom).
+    int snappedMs(int ms, Qt::KeyboardModifiers modifiers) const;
     void refreshPeaks();
     void invalidatePeaks();
 

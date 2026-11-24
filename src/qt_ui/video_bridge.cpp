@@ -1,5 +1,7 @@
 #include "video_bridge.h"
 
+#include "ffmpegsource_common_qt.h"
+
 #include "include/aegisub/subtitles_provider.h"
 #include "include/aegisub/video_provider.h"
 
@@ -49,6 +51,58 @@ std::unique_ptr<VideoProvider> CreateFFmpegSourceVideoProvider(
     agi::fs::path const &path, std::string const &colormatrix, agi::BackgroundRunner *br);
 std::unique_ptr<VideoProvider> CreateCacheVideoProvider(std::unique_ptr<VideoProvider> provider);
 
+namespace {
+
+/// Installs the ffms2 track selector for the duration of one provider creation.
+///
+/// The Qt copy of FFmpegSourceProvider::AskForTrackSelection() consults it
+/// instead of popping the original wxWidgets choice dialog, so the Qt process
+/// never needs a wxApp for multi-track files.
+class TrackSelectorGuard {
+public:
+    explicit TrackSelectorGuard(int preferred_track) {
+        aegisub_qt::SetTrackSelector(
+            [preferred_track](aegisub_qt::MediaKind,
+                              const std::vector<aegisub_qt::MediaTrackInfo> &tracks) {
+                if (preferred_track >= 0)
+                    return preferred_track;
+                return tracks.empty() ? -1 : tracks.front().id;
+            });
+    }
+
+    ~TrackSelectorGuard() { aegisub_qt::ClearTrackSelector(); }
+
+    TrackSelectorGuard(TrackSelectorGuard const &) = delete;
+    TrackSelectorGuard &operator=(TrackSelectorGuard const &) = delete;
+};
+
+/// Keyframe start times in milliseconds (agi::vfr::START semantics), ascending
+/// and de-duplicated.
+std::vector<int> CollectKeyframeTimes(VideoProvider &provider) {
+    std::vector<int> times;
+    const int frame_count = provider.GetFrameCount();
+    if (frame_count <= 0)
+        return times;
+
+    const auto fps = provider.GetFPS();
+    const auto frames = provider.GetKeyFrames();
+    times.reserve(frames.size());
+    for (int frame : frames) {
+        if (frame < 0 || frame >= frame_count)
+            continue;
+        // agi::vfr::START semantics gives the time at which a line starting on
+        // this frame is first visible; for the first frame that can be slightly
+        // negative, which is clamped to 0 for drawing/snapping.
+        const int ms = std::max(0, fps.TimeAtFrame(frame, agi::vfr::START));
+        if (!times.empty() && ms <= times.back())
+            continue;
+        times.push_back(ms);
+    }
+    return times;
+}
+
+} // namespace
+
 namespace aegisub_qt {
 
 struct VideoBridge::Impl {
@@ -56,6 +110,7 @@ struct VideoBridge::Impl {
     std::unique_ptr<VideoProvider> provider;
     std::unique_ptr<SubtitlesProvider> subtitles;
     VideoFrame frame;
+    std::vector<int> keyframe_times_ms;
 
     Impl()
     : runner(agi::make_unique<QtBackgroundRunner>())
@@ -83,7 +138,8 @@ void VideoBridge::Initialize() {
     });
 }
 
-bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error) {
+bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error,
+                           int preferredTrack) {
     Close();
     Initialize();
 
@@ -92,6 +148,8 @@ bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error) {
         // No colormatrix override on the first open; ffms2 converts using the
         // colour space it reads from the container, exactly like the wx
         // frontend when it has no previous provider to inherit one from.
+        // The guard makes multi-track files pick a track without a wx dialog.
+        TrackSelectorGuard selector(preferredTrack);
         auto provider = CreateFFmpegSourceVideoProvider(pathFromUtf8(utf8_path), {}, impl_->runner.get());
         if (!provider) {
             if (error)
@@ -99,14 +157,17 @@ bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error) {
             return false;
         }
         impl_->provider = CreateCacheVideoProvider(std::move(provider));
+        impl_->keyframe_times_ms = CollectKeyframeTimes(*impl_->provider);
         return true;
     } catch (agi::Exception const &ex) {
         impl_->provider.reset();
+        impl_->keyframe_times_ms.clear();
         if (error)
             *error = ex.GetMessage();
         return false;
     } catch (std::exception const &ex) {
         impl_->provider.reset();
+        impl_->keyframe_times_ms.clear();
         if (error)
             *error = ex.what();
         return false;
@@ -116,6 +177,13 @@ bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error) {
         *error = "This build has no ffms2 support";
     return false;
 #endif
+}
+
+std::vector<MediaTrackInfo> VideoBridge::ProbeVideoTracks(std::string const &utf8_path,
+                                                          std::string *error) {
+    std::vector<MediaTrackInfo> tracks;
+    ProbeTracks(utf8_path, MediaKind::Video, &tracks, error);
+    return tracks;
 }
 
 bool VideoBridge::OpenDummy(int width, int height, double fps, int frame_count,
@@ -133,14 +201,18 @@ bool VideoBridge::OpenDummy(int width, int height, double fps, int frame_count,
         impl_->provider = agi::make_unique<DummyVideoProvider>(
             agi::vfr::Framerate(fps), frame_count, width, height,
             agi::Color(31, 31, 31), true);
+        // The dummy provider reports no keyframes (GetKeyFrames() == {}).
+        impl_->keyframe_times_ms.clear();
         return true;
     } catch (agi::Exception const &ex) {
         impl_->provider.reset();
+        impl_->keyframe_times_ms.clear();
         if (error)
             *error = ex.GetMessage();
         return false;
     } catch (std::exception const &ex) {
         impl_->provider.reset();
+        impl_->keyframe_times_ms.clear();
         if (error)
             *error = ex.what();
         return false;
@@ -151,6 +223,7 @@ void VideoBridge::Close() {
     impl_->provider.reset();
     impl_->subtitles.reset();
     impl_->frame = VideoFrame{};
+    impl_->keyframe_times_ms.clear();
 }
 
 bool VideoBridge::IsOpen() const { return impl_->provider != nullptr; }
@@ -260,5 +333,9 @@ std::vector<unsigned char> const &VideoBridge::FrameData() const { return impl_-
 int VideoBridge::FrameWidth() const { return int(impl_->frame.width); }
 int VideoBridge::FrameHeight() const { return int(impl_->frame.height); }
 bool VideoBridge::FrameFlipped() const { return impl_->frame.flipped; }
+
+std::vector<int> const &VideoBridge::GetKeyframeTimesMs() const {
+    return impl_->keyframe_times_ms;
+}
 
 } // namespace aegisub_qt
