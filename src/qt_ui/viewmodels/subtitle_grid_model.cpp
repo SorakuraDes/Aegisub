@@ -273,6 +273,17 @@ void SubtitleGridModel::applySelection(const QSet<int> &selection, int active) {
         emit activeRowChanged();
 }
 
+void SubtitleGridModel::setAutomationSelection(const QList<int> &rows, int active) {
+    QSet<int> selection;
+    for (int row : rows)
+        if (row >= 0 && row < lineCount()) selection.insert(row);
+    if (active < 0 || active >= lineCount())
+        active = selection.isEmpty() ? (lineCount() ? 0 : -1) : *std::min_element(selection.begin(), selection.end());
+    if (active >= 0) selection.insert(active);
+    anchor_row_ = active;
+    applySelection(selection, active);
+}
+
 void SubtitleGridModel::selectOnly(int row) {
     QSet<int> selection;
     if (row >= 0)

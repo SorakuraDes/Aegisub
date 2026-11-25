@@ -612,6 +612,37 @@ ApplicationWindow {
         }
 
         Menu {
+            id: automationMenu
+            objectName: "automationMenu"
+            title: i18n.t("Automation")
+            width: 350
+            delegate: ShortcutMenuItem {}
+            onAboutToShow: automationVM.validateMenu()
+            property AutomationMacroMenu macroEntries: AutomationMacroMenu {
+                targetMenu: automationMenu
+                submenuFactory: automationSubmenuFactory
+                entries: automationVM.menu
+                firstMacroIndex: 3
+            }
+
+            ShortcutMenuItem {
+                objectName: "automationManagerMenuItem"
+                text: i18n.t("Automation...")
+                onTriggered: Qt.callLater(() => automationManagerDialog.open())
+            }
+            ShortcutMenuItem {
+                objectName: "automationReloadAutoloadMenuItem"
+                text: i18n.t("Reload autoload Automation scripts")
+                onTriggered: Qt.callLater(() => automationVM.reloadAutoload())
+            }
+            MenuSeparator {
+                objectName: "automationMacroSeparator"
+                visible: automationVM.menu.length > 0
+                height: visible ? implicitHeight : 0
+            }
+        }
+
+        Menu {
             title: i18n.t("View")
             width: 240
             ShortcutMenuItem {
@@ -658,6 +689,54 @@ ApplicationWindow {
     // ---- Dialogs ---------------------------------------------------------
 
     LanguageDialog { id: languageDialog }
+    AutomationManagerDialog { id: automationManagerDialog }
+    Component {
+        id: automationSubmenuFactory
+        Menu {
+            id: automationSubmenu
+            property var entries: []
+            width: 320
+            delegate: ShortcutMenuItem {}
+            property AutomationMacroMenu macroEntries: AutomationMacroMenu {
+                targetMenu: automationSubmenu
+                submenuFactory: automationSubmenuFactory
+                entries: automationSubmenu.entries
+            }
+        }
+    }
+
+    Connections {
+        target: automationVM
+        function onExecutionError(message) {
+            automationErrorText.text = message
+            automationErrorDialog.open()
+        }
+    }
+
+    Dialog {
+        id: automationErrorDialog
+        objectName: "automationErrorDialog"
+        title: i18n.t("Error")
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(600, parent ? parent.width - 32 : 600)
+        height: 300
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        standardButtons: Dialog.Ok
+
+        contentItem: ScrollView {
+            contentWidth: availableWidth
+            TextArea {
+                id: automationErrorText
+                objectName: "automationErrorText"
+                readOnly: true
+                textFormat: TextEdit.PlainText
+                wrapMode: TextEdit.Wrap
+            }
+        }
+    }
 
     Dialog {
         id: jumpDialog

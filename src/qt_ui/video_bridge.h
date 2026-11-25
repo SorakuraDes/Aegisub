@@ -56,6 +56,8 @@ public:
 
     int Width() const;
     int Height() const;
+    double DisplayAspectRatio() const;
+    std::vector<int> GetKeyframes() const;
     int FrameCount() const;
     /// Average frame rate (exact for CFR sources).
     double FPS() const;

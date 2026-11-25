@@ -11,6 +11,7 @@ qt6_moc = qt6.preprocess(
         'viewmodels/translation_service.h',
         'viewmodels/preferences_vm.h',
         'viewmodels/mru_vm.h',
+        'automation/automation_vm.h',
         'viewmodels/log_vm.h',
         'viewmodels/theme_vm.h',
         'viewmodels/properties_vm.h',
@@ -61,6 +62,7 @@ ass_qt_core = static_library('ass_qt_core',
         '../ass_file.cpp',
         '../ass_entry.cpp',
         '../ass_dialogue.cpp',
+        '../ass_karaoke.cpp',
         '../ass_style.cpp',
         '../ass_attachment.cpp',
         '../ass_override.cpp',
@@ -129,6 +131,9 @@ qt_frontend = static_library('qt-frontend',
         'viewmodels/translation_service.cpp',
         'viewmodels/preferences_vm.cpp',
         'viewmodels/mru_vm.cpp',
+        'automation/automation_vm.cpp',
+        'automation/lua_ass_file.cpp',
+        'automation/lua_runtime.cpp',
         'viewmodels/log_vm.cpp',
         'viewmodels/theme_vm.cpp',
         'ass_syntax_highlighter.cpp',
@@ -160,7 +165,7 @@ qt_frontend = static_library('qt-frontend',
 
 qt_frontend_dep = declare_dependency(
     include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.'), include_directories('..')],
-    link_with: [qt_frontend, av_qt_core, ass_qt_core, libaegisub],
+    link_with: [qt_frontend, av_qt_core, ass_qt_core, libaegisub, libluabins],
     dependencies: [qt6_dep] + deps,
 )
 
@@ -179,12 +184,18 @@ aegisub_qt = executable('aegisub-qt', 'main.cpp', qt6_resources,
 
 qt_test_dep = dependency('qt6', modules: ['Test'])
 stage15_integration_test = executable('qt-stage15-integration-test',
-    files('main.cpp', 'stage15_integration_test.cpp', 'stage15b_integration_test.cpp'), qt6_resources,
+    files('main.cpp', 'stage15_integration_test.cpp', 'stage15b_integration_test.cpp', 'stage16a_integration_test.cpp'), qt6_resources,
     dependencies: [qt_frontend_dep, qt_test_dep],
     cpp_args: ['/utf-8', '-DAEGISUB_STAGE15_TEST'],
     build_by_default: false,
 )
 test('qt-stage15-integration', stage15_integration_test,
+    env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
+    timeout: 60,
+)
+
+test('qt-stage16a-automation', stage15_integration_test,
+    args: ['--stage16a'],
     env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
     timeout: 60,
 )

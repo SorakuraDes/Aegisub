@@ -15,6 +15,7 @@
 #include <libaegisub/color.h>
 
 #include <QColor>
+#include <QScopedValueRollback>
 
 #include <algorithm>
 #include <string>
@@ -122,8 +123,6 @@ void StylesViewModel::refreshStyles(bool force_reload) {
 
     const bool names_changed = names != style_names_;
     style_names_ = names;
-    if (names_changed)
-        emit styleNamesChanged();
 
     int index = names.indexOf(previous_name);
     if (index < 0)
@@ -133,16 +132,27 @@ void StylesViewModel::refreshStyles(bool force_reload) {
 
     const bool index_changed = index != current_index_;
     current_index_ = index;
+    if (names_changed)
+        emit styleNamesChanged();
     if (index_changed)
         emit currentIndexChanged();
 
-    if (names_changed || index_changed || force_reload)
+    if (names_changed || index_changed || force_reload) {
+        emit styleChanged();
         emit reloadForm();
+    }
 }
 
 void StylesViewModel::onFileCommitted(int type, const AssDialogue *) {
-    if (type == AssFile::COMMIT_NEW || (type & AssFile::COMMIT_STYLES))
-        refreshStyles(false);
+    if (type != AssFile::COMMIT_NEW && !(type & AssFile::COMMIT_STYLES))
+        return;
+
+    // Continuous edits already came from the form. Reloading it on every
+    // keystroke or spin step would overwrite the controls being edited.
+    const bool reload = type == AssFile::COMMIT_NEW || !committing_form_edit_;
+    if (reload)
+        resetCoalescing();
+    refreshStyles(reload);
 }
 
 void StylesViewModel::onRestored() {
@@ -211,9 +221,11 @@ void StylesViewModel::finishChange(const QString &description) {
     if (AssStyle *style = current())
         style->UpdateData();
     // Coalesce rapid edits (typing a size, dragging a spin box) into one step.
-    commit_id_ =
-        aegisub_qt::commit(file_, toStdString(description), AssFile::COMMIT_STYLES, commit_id_,
-                          nullptr);
+    {
+        const QScopedValueRollback<bool> form_edit(committing_form_edit_, true);
+        commit_id_ = aegisub_qt::commit(file_, toStdString(description), AssFile::COMMIT_STYLES,
+                                        commit_id_, nullptr);
+    }
     coalesce_timer_.start();
     emit styleChanged();
 }
@@ -303,7 +315,6 @@ void StylesViewModel::setName(const QString &value) {
     resetCoalescing();
     commitStyles(QStringLiteral("Rename style"), AssFile::COMMIT_DIAG_META);
     clearError();
-    emit styleChanged();
 }
 
 int StylesViewModel::newStyle() {

@@ -155,14 +155,22 @@ bool translatedMenus(QQuickWindow *window) {
     auto *bar = window->findChild<QObject *>(QStringLiteral("mainMenuBar"));
     const QStringList titles{QStringLiteral("文件"), QStringLiteral("编辑"), QStringLiteral("字幕"),
                              QStringLiteral("时间"), QStringLiteral("视频"), QStringLiteral("音频"),
-                             QStringLiteral("视图"), QStringLiteral("帮助")};
-    if (!bar || bar->property("count").toInt() != titles.size()) return false;
+                             QStringLiteral("自动化"), QStringLiteral("视图"), QStringLiteral("帮助")};
+    if (!bar) {
+        qWarning() << "Stage 15B menu bar: mainMenuBar missing";
+        return false;
+    }
     QObject *subtitle = nullptr;
-    for (qsizetype i = 0; i < titles.size(); ++i) {
+    QStringList actual;
+    for (int i = 0; i < bar->property("count").toInt(); ++i) {
         QQmlExpression expression(qmlContext(bar), bar, QStringLiteral("menuAt(%1)").arg(i));
         auto *top = object(expression.evaluate());
-        if (!top || top->property("title").toString() != titles[i]) return false;
+        actual << (top ? top->property("title").toString() : QStringLiteral("<missing>"));
         if (i == 2) subtitle = top;
+    }
+    if (actual != titles) {
+        qWarning() << "Stage 15B menu bar: expected" << titles << "but found" << actual;
+        return false;
     }
 
     const auto labels = [](QObject *menu) {

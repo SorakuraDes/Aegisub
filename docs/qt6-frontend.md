@@ -4,6 +4,16 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 16A：Automation 4
+
+基线 `feature@b6c0ea5da`。Qt 仅补链根 Meson 已定义的 `libluabins`；LuaJIT 已在公用 `deps`，原生 Lua 模块已编入 `libaegisub`。Qt 在 `main.cpp` 组装 Automation ViewModel，不构造 wx `agi::Context`。
+
+- **原版核查**：[default_menu.json](../src/libresrc/default_menu.json) 将 `A&utomation` 放在 Audio / View 之间；[menu.cpp](../src/menu.cpp) 生成 `am/meta`、分隔符及按 `/` 分层的宏；[default_hotkey.json](../src/libresrc/default_hotkey.json) 没有 `am/*` 默认快捷键。Qt 显式提供重扫自动加载目录的菜单项，不绑定新快捷键。静态文字走现有实时目录和助记符归一化。
+- **目录**：[default_config.json](../src/libresrc/default_config.json) 的 `Path/Automation/Autoload` 与 `Path/Automation/Include` 都先搜索 `?user`，再搜索 `?data`，按 `|` 分隔。Windows `?data` 是可执行文件所在目录，`?user` 走实际配置目录（含 Qt 回退或覆盖）；开发构建仅在 `?data` 对应目录不存在时识别源树。`include` 先搜索执行脚本所在目录，再搜索配置目录；内置模块由已有 libaegisub Lua 模块预载。脚本管理器手动加载的条目在当前会话保留。
+- **脚本契约**：[auto4_lua.cpp](../src/auto4_lua.cpp)、[auto4_lua_assfile.cpp](../src/auto4_lua_assfile.cpp) 和七个官方入口的核查确认：全文索引依次为 Info、Styles、Events，注释是 `class=dialogue` 加 `comment=true`。Clean Tags / Strip tags / Add edgeblur 需要行表读写；Automatic karaoke lead-in 需要有序选区与校验；Make fullwidth 依赖 Unicode 模块；Karaoke Templater 依赖 `karaskel`、负索引插行、卡拉 OK 解析与文本度量，并与 Clean Tags 一同注册导出过滤器；Select overlaps 需要 MoonScript、`ipairs` 和执行后的绝对选区。
+- **提交规则**：校验用只读快照，缺少活动行时传 `nil`；运行用独立工作快照，缺少活动行传 `0`。错误和 `aegisub.cancel()` 丢弃工作副本（包括 extradata），处理成功才发布变更并通过现有 UndoManager 单次提交。重复 `set_undo_point` 在本阶段提供最终名称，不拆分 Undo。纯选区、不变写回都不创建撤销记录。进度和对话框为 Stage 16B 占位，导出过滤器仅记录注册信息。
+- **收口**：选区和字幕提交只使菜单校验缓存失效，脚本重载及语言切换只重建菜单骨架；打开 Automation 菜单时才校验失效缓存。直接运行只校验该宏。外部样式提交和 Undo/Redo 会回填打开的样式表单；表单自身的连续编辑不会重复回填。
+
 ## Stage 15B 后续：Windows 播放、语言与启动
 
 基线 `feature@8b172c2c1`。Qt 版使用独立的 [XAudio2 播放器](../src/qt_ui/xaudio2_player_qt.cpp)，在专用 MTA 线程管理设备、音源和播放控制；视频保留 28×28 图标按钮，音频当前行使用 58×28 图标加文字按钮。

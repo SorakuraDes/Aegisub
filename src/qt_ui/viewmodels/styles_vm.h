@@ -159,5 +159,6 @@ private:
     /// Coalesces rapid edits of the same style into one undo step.
     QTimer coalesce_timer_;
     int commit_id_ = -1;
+    bool committing_form_edit_ = false;
     agi::signal::Connection commit_connection_;
 };

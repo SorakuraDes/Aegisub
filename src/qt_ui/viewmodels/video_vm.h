@@ -77,6 +77,8 @@ public:
     double fps() const;
     int videoWidth() const;
     int videoHeight() const;
+    double sourceDisplayAspectRatio() const;
+    std::vector<int> sourceKeyframes() const;
     bool isPlaying() const;
     QString lastError() const;
     int zoomPercent() const { return zoom_percent_; }

@@ -134,6 +134,8 @@ QString VideoViewModel::lastError() const { return last_error_; }
 bool VideoViewModel::autoSeekToActiveLine() const { return auto_seek_; }
 double VideoViewModel::fps() const { return bridge_->FPS(); }
 int VideoViewModel::videoWidth() const { return bridge_->Width(); }
+double VideoViewModel::sourceDisplayAspectRatio() const { return bridge_->DisplayAspectRatio(); }
+std::vector<int> VideoViewModel::sourceKeyframes() const { return bridge_->GetKeyframes(); }
 int VideoViewModel::videoHeight() const { return bridge_->Height(); }
 
 int VideoViewModel::currentTimeMs() const {

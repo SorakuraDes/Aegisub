@@ -205,6 +205,14 @@ bool VideoBridge::IsOpen() const { return impl_->provider != nullptr; }
 
 int VideoBridge::Width() const { return impl_->provider ? impl_->provider->GetWidth() : 0; }
 int VideoBridge::Height() const { return impl_->provider ? impl_->provider->GetHeight() : 0; }
+double VideoBridge::DisplayAspectRatio() const {
+    if (!IsOpen() || Height() <= 0) return 0.0;
+    const double dar = impl_->provider->GetDAR();
+    return dar > 0.0 ? dar : double(Width()) / Height();
+}
+std::vector<int> VideoBridge::GetKeyframes() const {
+    return IsOpen() ? impl_->provider->GetKeyFrames() : std::vector<int>{};
+}
 int VideoBridge::FrameCount() const { return impl_->provider ? impl_->provider->GetFrameCount() : 0; }
 double VideoBridge::FPS() const { return impl_->provider ? impl_->provider->GetFPS().FPS() : 0.0; }
 bool VideoBridge::HasAudio() const { return impl_->provider && impl_->provider->HasAudio(); }

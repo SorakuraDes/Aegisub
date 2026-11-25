@@ -5,6 +5,7 @@
 #include <libaegisub/exception.h>
 
 #include "aegisub_core.h"
+#include "automation/automation_vm.h"
 #include "audio_waveform_item.h"
 #include "video_bridge.h"
 #include "video_viewport_item.h"
@@ -202,6 +203,7 @@ private:
 int runStage15IntegrationTest(QQmlApplicationEngine &engine);
 int runStage15BIntegrationTest(QQmlApplicationEngine &engine);
 int runStage15BReloadTest(QQmlApplicationEngine &engine);
+int runStage16AIntegrationTest(QQmlApplicationEngine &engine);
 #endif
 
 int main(int argc, char *argv[]) {
@@ -212,8 +214,11 @@ int main(int argc, char *argv[]) {
     });
     qunsetenv("AEGISUB_QT_LANGUAGE");
     bool reloadTest = false;
-    for (int i = 1; i < argc; ++i)
+    bool automationTest = false;
+    for (int i = 1; i < argc; ++i) {
         reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
+        automationTest |= QByteArray(argv[i]) == "--stage16a";
+    }
     QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
     if (!reloadTest) {
         if (!testConfig.isValid()) {
@@ -272,6 +277,7 @@ int main(int argc, char *argv[]) {
     AudioViewModel audioVM(&script, &gridModel, &undoManager);
     MruViewModel mruVM;
     LogViewModel logVM;
+    aegisub_qt::automation::AutomationViewModel automationVM(script, gridModel, documentVM, videoVM, audioVM, i18n);
     QObject::connect(&documentVM, &DocumentViewModel::fileOpened, &mruVM, &MruViewModel::recordSubtitle);
     QObject::connect(&videoVM, &VideoViewModel::fileOpened, &mruVM, &MruViewModel::recordVideo);
     QObject::connect(&audioVM, &AudioViewModel::fileOpened, &mruVM, &MruViewModel::recordAudio);
@@ -339,6 +345,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("preferencesVM", &preferencesVM);
     engine.rootContext()->setContextProperty("mruVM", &mruVM);
     engine.rootContext()->setContextProperty("logVM", &logVM);
+    engine.rootContext()->setContextProperty("automationVM", &automationVM);
     engine.rootContext()->setContextProperty("themeVM", &themeVM);
     engine.rootContext()->setContextProperty("propertiesVM", &propertiesVM);
     engine.rootContext()->setContextProperty("gridModel", &gridModel);
@@ -430,6 +437,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    automationVM.reloadAutoload();
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [] {
         QString error;
         if (!aegisub_qt::FlushOptions(&error))
@@ -437,6 +445,7 @@ int main(int argc, char *argv[]) {
     });
 
 #ifdef AEGISUB_STAGE15_TEST
+    if (automationTest) return runStage16AIntegrationTest(engine);
     if (reloadTest) return runStage15BReloadTest(engine);
     if (const int result = runStage15IntegrationTest(engine)) return result;
     return runStage15BIntegrationTest(engine);

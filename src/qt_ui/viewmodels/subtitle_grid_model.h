@@ -91,6 +91,7 @@ public:
     const QSet<int> &selectedRows() const;
     /// Ascending list of the selected rows.
     Q_INVOKABLE QList<int> sortedSelectedRows() const;
+    void setAutomationSelection(const QList<int> &rows, int active);
 
     // ---- Selection ---------------------------------------------------------
 

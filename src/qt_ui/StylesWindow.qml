@@ -5,6 +5,7 @@ import QtQuick.Layouts
 // Non-modal styles manager: a compact list/form editor for [V4+ Styles].
 Window {
     id: stylesWindow
+    objectName: "automationStylesWindow"
     width: 800
     height: 560
     minimumWidth: 720
@@ -193,6 +194,7 @@ Window {
                         Label { text: i18n.t("Font"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         TextField {
                             id: fontField
+                            objectName: "stylesFontField"
                             Layout.fillWidth: true
                             implicitHeight: stylesWindow.fieldHeight
                             font.pixelSize: 12
@@ -201,6 +203,7 @@ Window {
                         Label { text: i18n.t("Size"); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: fontSizeSpin
+                            objectName: "stylesFontSizeSpin"
                             from: 1
                             to: 500
                             editable: true

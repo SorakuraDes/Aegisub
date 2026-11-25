@@ -88,9 +88,14 @@ AudioViewModel::AudioViewModel(AssFile *file, SubtitleGridModel *gridModel,
         commit_connection_ = file_->AddCommitListener(&AudioViewModel::onFileCommitted, this);
     if (undo_manager_)
         connect(undo_manager_, &UndoManager::restored, this, &AudioViewModel::onRestored);
-    if (grid_model_)
+    if (grid_model_) {
         connect(grid_model_, &SubtitleGridModel::activeRowChanged,
                 this, &AudioViewModel::onActiveRowChanged);
+        connect(grid_model_, &QAbstractItemModel::modelReset, this, [this] {
+            refreshActiveTimes();
+            emit activeTimesChanged();
+        });
+    }
 }
 
 AudioViewModel::~AudioViewModel() {
