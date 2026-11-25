@@ -375,6 +375,7 @@ ApplicationWindow {
 
     menuBar: MenuBar {
         id: mainMenuBar
+        objectName: "mainMenuBar"
         padding: 0
         spacing: 0
 
@@ -392,11 +393,9 @@ ApplicationWindow {
             rightPadding: 10
 
             contentItem: Label {
-                // Qt Quick Labels do not interpret '&' mnemonics, so drop them
-                // instead of showing "&File".
-                text: (barItem.text.length > 0
-                       ? barItem.text
-                       : (barItem.action ? barItem.action.text : "")).replace(/&/g, "")
+                text: barItem.text.length > 0
+                      ? barItem.text
+                      : (barItem.action ? barItem.action.text : "")
                 font.pixelSize: 13
                 color: barItem.highlighted ? Material.accent : themeVM.onSurface
                 verticalAlignment: Text.AlignVCenter
@@ -616,6 +615,11 @@ ApplicationWindow {
             title: i18n.t("View")
             width: 240
             ShortcutMenuItem {
+                objectName: "languageMenuItem"
+                text: i18n.t("Language") + "..."
+                onTriggered: languageDialog.open()
+            }
+            ShortcutMenuItem {
                 icon.source: "qrc:/icons/settings.svg"
                 text: i18n.t("Options...")
                 shortcutText: "Alt+O"
@@ -652,6 +656,8 @@ ApplicationWindow {
     }
 
     // ---- Dialogs ---------------------------------------------------------
+
+    LanguageDialog { id: languageDialog }
 
     Dialog {
         id: jumpDialog

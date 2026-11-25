@@ -20,10 +20,11 @@ Button {
     icon.height: 18
     icon.color: control.checked ? themeVM.onPrimaryContainer : themeVM.onSurface
     contentItem.opacity: enabled ? 1 : 0.5
-    Accessible.name: text
+    property string actionDescription: text
+    Accessible.name: actionDescription
     ToolTip {
         visible: control.enabled && (control.hovered || control.visualFocus)
-        text: control.text
+        text: control.actionDescription
         delay: 450
     }
 

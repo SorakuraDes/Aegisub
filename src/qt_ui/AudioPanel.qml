@@ -42,8 +42,14 @@ Item {
                 anchors.bottomMargin: 0
                 spacing: 2
                 AudioTool {
+                    objectName: "audioPlayLineButton"
+                    implicitWidth: Math.max(58, implicitContentWidth + 8)
+                    display: AbstractButton.TextBesideIcon
+                    font.pixelSize: 11
+                    spacing: 3
                     icon.source: "qrc:/icons/play_arrow.svg"
-                    text: i18n.t("Play Line")
+                    text: i18n.language === "en_US" ? "Line" : i18n.t("Current line")
+                    actionDescription: i18n.t("Play current line")
                     onClicked: audioVM.playSelection()
                 }
                 AudioTool {

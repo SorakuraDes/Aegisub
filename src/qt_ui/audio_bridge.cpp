@@ -6,7 +6,7 @@
 
 #include "ffmpegsource_common_qt.h"
 
-#include "include/aegisub/audio_player.h"
+#include "xaudio2_player_qt.h"
 #include "qt_background_runner.h"
 
 #include <libaegisub/audio/provider.h>
@@ -30,8 +30,6 @@
 // Factories defined in the original sources; no headers declare them.
 std::unique_ptr<agi::AudioProvider> CreateFFmpegSourceAudioProvider(
     agi::fs::path const &path, agi::BackgroundRunner *runner);
-std::unique_ptr<AudioPlayer> CreateXAudio2Player(agi::AudioProvider *provider,
-                                                 wxWindow *window);
 
 namespace aegisub_qt {
 namespace {
@@ -109,7 +107,22 @@ public:
 struct AudioBridge::Impl {
     std::unique_ptr<agi::BackgroundRunner> runner;
     std::unique_ptr<agi::AudioProvider> provider;
-    std::unique_ptr<AudioPlayer> player;
+    std::unique_ptr<XAudio2PlayerQt> player;
+
+    template<class Operation>
+    bool UsePlayer(char const *operation, Operation &&run) {
+        try {
+            run(*player);
+            return true;
+        } catch (agi::Exception const &error) {
+            PlayerFailed(error.GetMessage());
+        } catch (std::exception const &error) {
+            PlayerFailed(error.what());
+        } catch (...) {
+            PlayerFailed(std::string("XAudio2 ") + operation + " failed: unknown error");
+        }
+        return false;
+    }
 
     bool fallback = false;
     bool fallback_playing = false;
@@ -124,28 +137,24 @@ struct AudioBridge::Impl {
     {
     }
 
-    /// Create the XAudio2 player; on failure keep the wall-clock fallback and
-    /// record why. Never throws.
+    void PlayerFailed(std::string const &reason) {
+        player.reset();
+        fallback = true;
+        status = "Silent playback (" + reason + ")";
+        LOG_W("qt/audio") << status;
+    }
+
     void CreatePlayer() {
         try {
-            player = CreateXAudio2Player(provider.get(), nullptr);
+            player = agi::make_unique<XAudio2PlayerQt>(provider.get());
             fallback = false;
             status = "XAudio2";
-        } catch (AudioPlayerOpenError const &error) {
-            player.reset();
-            fallback = true;
-            status = "Silent playback (XAudio2 unavailable: " + error.GetMessage() + ")";
-            LOG_W("qt/audio") << status;
+        } catch (agi::Exception const &error) {
+            PlayerFailed(error.GetMessage());
         } catch (std::exception const &error) {
-            player.reset();
-            fallback = true;
-            status = std::string("Silent playback (XAudio2 unavailable: ") + error.what() + ")";
-            LOG_W("qt/audio") << status;
+            PlayerFailed(error.what());
         } catch (...) {
-            player.reset();
-            fallback = true;
-            status = "Silent playback (XAudio2 unavailable)";
-            LOG_W("qt/audio") << status;
+            PlayerFailed("XAudio2 initialization failed: unknown error");
         }
     }
 };
@@ -402,50 +411,48 @@ bool AudioBridge::PlayRange(int64_t start_sample, int64_t end_sample, std::strin
         return false;
     }
 
-    int64_t start = std::clamp<int64_t>(start_sample, 0, total - 1);
-    int64_t end = std::clamp<int64_t>(end_sample, start + 1, total);
+    const int64_t start = std::clamp<int64_t>(start_sample, 0, total);
+    const int64_t end = std::clamp<int64_t>(end_sample, 0, total);
     if (end <= start) {
         if (error)
             *error = "Invalid playback range";
         return false;
     }
+    impl_->fallback_end = end;
 
-    if (impl_->player) {
-        try {
-            impl_->player->SetVolume(impl_->volume);
-            impl_->player->Play(start, end - start);
-            if (impl_->player->IsPlaying())
-                return true;
-        } catch (std::exception const &err) {
-            LOG_W("qt/audio") << "XAudio2 playback failed: " << err.what();
-        } catch (...) {
-            LOG_W("qt/audio") << "XAudio2 playback failed";
-        }
+    // Retry on the next explicit Play after device loss, without reopening
+    // and reindexing the media.
+    if (!impl_->player)
+        impl_->CreatePlayer();
+    if (impl_->player && impl_->UsePlayer("start", [&](auto &player) {
+        player.SetVolume(impl_->volume);
+        player.Play(start, end - start);
+        LOG_D("qt/audio") << "XAudio2 started: sample=" << start
+                          << " count=" << end - start << " rate=" << SampleRate()
+                          << " volume=" << impl_->volume;
+    }))
+        return true;
 
-        // The device disappeared or the source voice failed: keep going with the
-        // wall-clock head so the timing UI still works.
-        impl_->player.reset();
-        impl_->fallback = true;
-        impl_->status = "Silent playback (XAudio2 playback failed)";
-    }
-
-    impl_->fallback = true;
+    // Keep timing tools usable on systems with no output device. The status
+    // retains the exact backend error instead of presenting this as real audio.
     impl_->fallback_playing = true;
     impl_->fallback_start = start;
-    impl_->fallback_end = end;
     impl_->fallback_started = std::chrono::steady_clock::now();
     return true;
 }
 
 void AudioBridge::Stop() {
     if (impl_->player)
-        impl_->player->Stop();
+        impl_->UsePlayer("stop", [](auto &player) { player.Stop(); });
     impl_->fallback_playing = false;
 }
 
 bool AudioBridge::IsPlaying() const {
-    if (impl_->player)
-        return impl_->player->IsPlaying();
+    if (impl_->player) {
+        bool playing = false;
+        impl_->UsePlayer("read state", [&](auto &player) { playing = player.IsPlaying(); });
+        return playing;
+    }
     if (!impl_->fallback_playing)
         return false;
 
@@ -458,7 +465,8 @@ bool AudioBridge::IsPlaying() const {
 
 int64_t AudioBridge::CurrentSample() const {
     if (impl_->player) {
-        const int64_t position = impl_->player->GetCurrentPosition();
+        int64_t position = 0;
+        impl_->UsePlayer("read position", [&](auto &player) { position = player.GetCurrentPosition(); });
         return position > 0 ? position : 0;
     }
 
@@ -482,7 +490,7 @@ int64_t AudioBridge::EndSample() const { return impl_->fallback_end; }
 void AudioBridge::SetVolume(double volume) {
     impl_->volume = std::clamp(volume, 0.0, 1.0);
     if (impl_->player)
-        impl_->player->SetVolume(impl_->volume);
+        impl_->UsePlayer("set volume", [&](auto &player) { player.SetVolume(impl_->volume); });
 }
 
 std::string AudioBridge::PlayerStatus() const { return impl_->status; }

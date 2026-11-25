@@ -313,10 +313,10 @@ void AudioWaveformItem::paint(QPainter *painter) {
 
     if (show_spectrum && !spectrum_.isNull())
         painter->drawImage(QRectF(0, wave_top, w, wave_height), spectrum_);
-    painter->fillRect(QRectF(std::clamp(start_x, 0.0, w), wave_top,
-                             std::clamp(end_x, 0.0, w) - std::clamp(start_x, 0.0, w),
-                             wave_height),
-                      kSelection);
+    const double sel_left = std::clamp(start_x, 0.0, w);
+    const double sel_right = std::clamp(end_x, 0.0, w);
+    if (sel_right > sel_left)
+        painter->fillRect(QRectF(sel_left, wave_top, sel_right - sel_left, wave_height), kSelection);
 
     if (!show_spectrum) {
         painter->setPen(kTickMajor);
@@ -331,7 +331,8 @@ void AudioWaveformItem::paint(QPainter *painter) {
         inside_pen.setWidthF(1.0);
         bool inside = false;
         for (int x = 0; x < columns; ++x) {
-            const bool selected = x >= int(start_x) && x <= int(end_x);
+            const double column_x = x + 0.5;
+            const bool selected = column_x >= sel_left && column_x < sel_right;
             if (selected != inside) {
                 painter->setPen(selected ? inside_pen : outside_pen);
                 inside = selected;

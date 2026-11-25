@@ -4,6 +4,16 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 15B 后续：Windows 播放、语言与启动
+
+基线 `feature@8b172c2c1`。Qt 版使用独立的 [XAudio2 播放器](../src/qt_ui/xaudio2_player_qt.cpp)，在专用 MTA 线程管理设备、音源和播放控制；视频保留 28×28 图标按钮，音频当前行使用 58×28 图标加文字按钮。
+
+- `View → Language...` 和 `Preferences → General` 共用 `App/Language`，切换立即刷新当前 QML，重启后沿用选择。[翻译服务](../src/qt_ui/viewmodels/translation_service.cpp)优先匹配 `.mo` 原键，再按去助记符的键查找；显示去掉 `(&X)` 和单个 `&`，`&&` 还原为字面 `&`。简中另补 Qt 菜单用的“时间”“视图”和“去除标签的文本”，不改原版词库。
+- [音频画布](../src/qt_ui/audio_waveform_item.cpp)将当前行的起止坐标分别夹在视口内，只在右边界大于左边界时绘制选区底色；波形列用相同的半开区间着色。波形和频谱共享底色选区逻辑。
+- [Meson](../src/qt_ui/meson.build)只为正式 Qt 应用启用 Windows GUI 子系统，MSVC 仍用 `mainCRTStartup` 调用标准 `main(argc, argv)`；无头测试目标不变。`dumpbin /headers` 检查正式产物为 `2 subsystem (Windows GUI)`。
+- Qt 单目标和 wx + Qt 双轨构建均退出 0。Meson 的四项 Qt 测试全部通过（本机显式设置 SDK 的 `QT_PLUGIN_PATH` 和 `QT_QPA_FONTDIR=C:/Windows/Fonts`）；[集成测试](../src/qt_ui/stage15b_integration_test.cpp)覆盖精确优先、助记符与字面 `&`、实时切换和重启后的八栏主菜单及字幕菜单四个子菜单。
+- [桌面验收](../.build-tools/stage16-seal/gui-20261125-213024-41896/desktop.log)：Windows UI Automation 验证八栏依次为文件、编辑、字幕、时间、视频、音频、视图、帮助，字幕下拉 12 项均为中文。波形三行像素检测的底色选区为相对 x=151–248，红蓝标记位于 x=150/250，蓝线以右恢复未选中底色。独立 `--audio` 打开 WAV 并实际播放；[`--video` 回归](../.build-tools/stage16-desktop/20261125-213115-21844/acceptance.log)验证视频推进、暂停、定位、关闭和独立当前行播放。两条路径的 Core Audio 会话峰值约 0.250，桌面实例均退出 0。
+
 ## Stage 15B：多页 Preferences 与 Tier 1 菜单
 
 基线 `feature@7a0f62002`。[Preferences](../src/qt_ui/PreferencesWindow.qml)分为 General、Appearance、Audio、Video、Interface、Backup、Advanced (FFMS2)；设置通过[配置模型](../src/qt_ui/viewmodels/preferences_vm.cpp)连接原版 `agi::Options`，即时写入 `config.json`。Appearance 保留动态 OKLCH 色板和十六进制主色。播放跟随、吸附和字幕同步即时联动；视频自动载音及 FFMS2 解码线程、Unsafe Seeking 在打开媒体时应用。

@@ -210,6 +210,7 @@ int main(int argc, char *argv[]) {
         std::fprintf(type == QtInfoMsg || type == QtDebugMsg ? stdout : stderr,
                      "%s\n", qPrintable(message));
     });
+    qunsetenv("AEGISUB_QT_LANGUAGE");
     bool reloadTest = false;
     for (int i = 1; i < argc; ++i)
         reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
@@ -249,6 +250,12 @@ int main(int argc, char *argv[]) {
     UndoManager undoManager(&script);
 
     TranslationService i18n;
+#ifdef AEGISUB_STAGE15_TEST
+    if (!reloadTest && !i18n.setLanguage(QStringLiteral("en_US"))) {
+        qCritical() << "Cannot set isolated test language:" << i18n.error();
+        return 1;
+    }
+#endif
     AppInfoViewModel appInfoVM;
     AboutViewModel aboutVM(&i18n);
     PreferencesViewModel preferencesVM;
@@ -323,6 +330,8 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<AssSyntaxHighlighter>("Aegisub", 1, 0, "AssSyntaxHighlighter");
 
     QQmlApplicationEngine engine;
+    i18n.setQmlEngine(&engine);
+    QObject::connect(&i18n, &TranslationService::languageChanged, &engine, &QQmlEngine::retranslate);
     engine.rootContext()->setContextProperty("nativeWindowRaise", QGuiApplication::platformName() != QStringLiteral("offscreen"));
     engine.rootContext()->setContextProperty("i18n", &i18n);
     engine.rootContext()->setContextProperty("appInfo", &appInfoVM);

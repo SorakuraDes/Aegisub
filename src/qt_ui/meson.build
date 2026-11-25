@@ -103,7 +103,7 @@ av_qt_core = static_library('av_qt_core',
         '../video_provider_dummy.cpp',
         '../video_provider_cache.cpp',
         '../audio_provider_ffmpegsource.cpp',
-        '../audio_player_xaudio2.cpp',
+        'xaudio2_player_qt.cpp',
         '../colorspace.cpp',
         '../subtitles_provider.cpp',
         '../subtitles_provider_csri.cpp',
@@ -164,9 +164,17 @@ qt_frontend_dep = declare_dependency(
     dependencies: [qt6_dep] + deps,
 )
 
+# Keep the standard main(argc, argv) entry point without allocating a console.
+qt_gui_link_args = []
+if host_machine.system() == 'windows' and cxx.get_argument_syntax() == 'msvc'
+    qt_gui_link_args += ['/ENTRY:mainCRTStartup']
+endif
+
 aegisub_qt = executable('aegisub-qt', 'main.cpp', qt6_resources,
     dependencies: qt_frontend_dep,
     cpp_args: ['/utf-8'],
+    link_args: qt_gui_link_args,
+    win_subsystem: 'windows',
 )
 
 qt_test_dep = dependency('qt6', modules: ['Test'])

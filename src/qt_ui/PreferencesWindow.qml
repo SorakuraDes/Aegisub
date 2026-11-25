@@ -88,6 +88,41 @@ Window {
                     }
                     ColumnLayout {
                         width: formScroll.availableWidth
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: prefs.page === 0
+                            Label {
+                                Layout.fillWidth: true
+                                text: i18n.t("Language")
+                                color: themeVM.onSurface
+                            }
+                            ComboBox {
+                                id: languagePicker
+                                objectName: "preferencesLanguagePicker"
+                                Layout.preferredWidth: 200
+                                Accessible.name: i18n.t("Language")
+                                enabled: !i18n.forced
+                                model: [{ code: "", name: i18n.t("System default") }].concat(i18n.availableLanguages)
+                                textRole: "name"
+                                valueRole: "code"
+                                function configuredIndex() {
+                                    return Math.max(0, indexOfValue(i18n.forced ? i18n.language : i18n.preference))
+                                }
+                                currentIndex: configuredIndex()
+                                onActivated: {
+                                    if (!i18n.setLanguage(currentValue))
+                                        currentIndex = Qt.binding(configuredIndex)
+                                }
+                            }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            visible: prefs.page === 0 && i18n.error.length > 0
+                            text: i18n.error
+                            textFormat: Text.PlainText
+                            color: themeVM.danger
+                            wrapMode: Text.WrapAnywhere
+                        }
                         Repeater {
                             model: prefs.fields[prefs.page]
                             delegate: RowLayout {

@@ -196,7 +196,12 @@ void AudioViewModel::setVolume(double volume) {
     if (volume_ == clamped)
         return;
     volume_ = clamped;
+    const bool was_silent = bridge_.UsingSilentFallback();
     bridge_.SetVolume(volume_);
+    if (!was_silent && bridge_.UsingSilentFallback()) {
+        stopPlayback();
+        emit playerStatusChanged();
+    }
     emit volumeChanged();
 }
 
@@ -445,10 +450,14 @@ bool AudioViewModel::playFrom(int start_ms) {
     if (duration <= 0)
         return false;
 
-    const int start = std::clamp(start_ms, 0, std::max(0, duration - 1));
+    const int start = std::max(0, start_ms);
+    const auto start_sample = msToSample(start);
+    const auto end_sample = bridge_.SampleCount();
+    if (start_sample >= end_sample)
+        return false;
 
     std::string error;
-    if (!bridge_.PlayRange(msToSample(start), msToSample(duration), &error)) {
+    if (!bridge_.PlayRange(start_sample, end_sample, &error)) {
         setError(QString::fromStdString(error));
         emit playerStatusChanged();
         return false;
@@ -691,9 +700,17 @@ void AudioViewModel::onPlaybackTick() {
     if (!playing_)
         return;
 
+    const bool was_silent = bridge_.UsingSilentFallback();
     const bool finished = !bridge_.IsPlaying();
-    const int ms = finished ? playback_end_ms_
+    const int position = finished ? playback_end_ms_
         : std::clamp(sampleToMs(bridge_.CurrentSample()), playback_start_ms_, playback_end_ms_);
+    const bool device_failed = !was_silent && bridge_.UsingSilentFallback();
+    if (device_failed) {
+        stopPlayback();
+        emit playerStatusChanged();
+        return;
+    }
+    const int ms = position;
     if (ms != playback_time_ms_) {
         playback_time_ms_ = ms;
         if (advanceViewForPlayhead())

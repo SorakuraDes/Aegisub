@@ -4,6 +4,7 @@
 #include "viewmodels/edit_box_vm.h"
 #include "viewmodels/preferences_vm.h"
 #include "viewmodels/properties_vm.h"
+#include "viewmodels/translation_service.h"
 #include "viewmodels/undo_manager.h"
 #include "viewmodels/video_vm.h"
 #include "ass_dialogue.h"
@@ -41,6 +42,22 @@ constexpr auto font = "Subtitle/Edit Box/Font Size";
 constexpr auto follow = "Audio/Lock Scroll on Cursor";
 constexpr auto sync = "Video/Subtitle Sync";
 constexpr auto levels = "Limits/Undo Levels";
+constexpr auto languageKey = "App/Language";
+const auto english = QStringLiteral("en_US");
+
+struct CatalogSample {
+    QString code;
+    QString language;
+    QString preferences;
+};
+
+// Known catalog strings: an unexpected English fallback must fail the test.
+const CatalogSample englishSample{english, QStringLiteral("Language"), QStringLiteral("Preferences")};
+const CatalogSample samples[] = {
+    {QStringLiteral("zh_CN"), QStringLiteral("\u8bed\u8a00"), QStringLiteral("\u504f\u597d")},
+    {QStringLiteral("de"), QStringLiteral("Sprache"), QStringLiteral("Einstellungen")},
+    {QStringLiteral("fr_FR"), QStringLiteral("Langue"), QStringLiteral("Pr\u00e9f\u00e9rences")},
+};
 constexpr int fontSize = 19;
 constexpr int undoLevels = 2;
 constexpr int interfacePage = 4;
@@ -134,6 +151,55 @@ QObject *entry(QObject *menu, const char *name) {
     return nullptr;
 }
 
+bool translatedMenus(QQuickWindow *window) {
+    auto *bar = window->findChild<QObject *>(QStringLiteral("mainMenuBar"));
+    const QStringList titles{QStringLiteral("文件"), QStringLiteral("编辑"), QStringLiteral("字幕"),
+                             QStringLiteral("时间"), QStringLiteral("视频"), QStringLiteral("音频"),
+                             QStringLiteral("视图"), QStringLiteral("帮助")};
+    if (!bar || bar->property("count").toInt() != titles.size()) return false;
+    QObject *subtitle = nullptr;
+    for (qsizetype i = 0; i < titles.size(); ++i) {
+        QQmlExpression expression(qmlContext(bar), bar, QStringLiteral("menuAt(%1)").arg(i));
+        auto *top = object(expression.evaluate());
+        if (!top || top->property("title").toString() != titles[i]) return false;
+        if (i == 2) subtitle = top;
+    }
+
+    const auto labels = [](QObject *menu) {
+        QStringList result;
+        if (menu) {
+            for (int i = 0; i < menu->property("count").toInt(); ++i) {
+                const auto *item = at(menu, i);
+                if (item && item->property("text").isValid())
+                    result.append(item->property("text").toString());
+            }
+        }
+        return result;
+    };
+    const QStringList direct{QStringLiteral("样式管理器…"), QStringLiteral("重设分辨率…"), QStringLiteral("插入行"),
+        QStringLiteral("重复行"), QStringLiteral("以当前帧前分割行"), QStringLiteral("以当前帧后分割行"),
+        QStringLiteral("删除行"), QStringLiteral("合并行"), QStringLiteral("排序所有行"),
+        QStringLiteral("排序选择行"), QStringLiteral("互换行"), QStringLiteral("全选")};
+    if (labels(subtitle) != direct) return false;
+
+    const auto submenu = [subtitle](const QString &title) -> QObject * {
+        for (int i = 0; i < subtitle->property("count").toInt(); ++i) {
+            auto *item = at(subtitle, i);
+            if (item && item->property("text").toString() == title)
+                return object(item->property("subMenu"));
+        }
+        return nullptr;
+    };
+    const QStringList insert{QStringLiteral("当前行之前"), QStringLiteral("当前行之后"),
+                             QStringLiteral("当前行之前，以视频时间起始"), QStringLiteral("当前行之后，以视频时间起始")};
+    const QStringList join{QStringLiteral("连接"), QStringLiteral("保留首行")};
+    const QStringList sort{QStringLiteral("开始时间"), QStringLiteral("结束时间"), QStringLiteral("样式名称"),
+                           QStringLiteral("说话人"), QStringLiteral("特效"), QStringLiteral("文本"),
+                           QStringLiteral("去除标签的文本"), QStringLiteral("层级")};
+    return labels(submenu(direct[2])) == insert && labels(submenu(direct[7])) == join &&
+           labels(submenu(direct[8])) == sort && labels(submenu(direct[9])) == sort;
+}
+
 // Invoke the production menu item's signal without relying on the platform's popup focus.
 bool trigger(QObject *item) {
     if (!item || !item->property("enabled").toBool() || !QMetaObject::invokeMethod(item, "triggered")) return false;
@@ -143,6 +209,47 @@ bool trigger(QObject *item) {
 
 bool trigger(QObject *menu, const char *name) { return trigger(entry(menu, name)); }
 
+QObject *languageMenuItem(QQuickWindow *window) {
+    return window->findChild<QObject *>(QStringLiteral("languageMenuItem"));
+}
+
+bool selectLanguage(QQuickItem *picker, const QString &code) {
+    if (!picker || !picker->isVisible() || !picker->isEnabled()) return false;
+    QQmlExpression index(qmlContext(picker), picker, QStringLiteral("indexOfValue('%1')").arg(code));
+    bool ok = false;
+    const int row = index.evaluate().toInt(&ok);
+    return !index.hasError() && ok && row >= 0 && picker->setProperty("currentIndex", row) &&
+        picker->property("currentValue").toString() == code;
+}
+
+bool setLanguageFromView(QQuickWindow *window, const QString &from, const QString &to) {
+    auto *dialog = window->findChild<QObject *>(QStringLiteral("languageDialog"));
+    if (!dialog || !trigger(languageMenuItem(window)) ||
+        !QTest::qWaitFor([&] { return dialog->property("opened").toBool(); }, 2000)) return false;
+    auto *picker = control(window, "languagePicker");
+    auto *apply = control(window, "languageApplyButton");
+    return picker && picker->property("currentValue").toString() == from && selectLanguage(picker, to) &&
+        apply && apply->isVisible() && apply->isEnabled() && QMetaObject::invokeMethod(apply, "clicked") &&
+        QTest::qWaitFor([&] { return !dialog->property("visible").toBool(); }, 2000);
+}
+
+bool languageMatches(QQuickWindow *window, TranslationService *i18n, const CatalogSample &sample) {
+    auto *item = languageMenuItem(window);
+    return item && i18n->language() == sample.code && i18n->preference() == sample.code &&
+        item->property("text").toString() == sample.language + QStringLiteral("...");
+}
+
+bool compactTransport(QQuickWindow *window, const char *name) {
+    const auto *button = control(window, name);
+    const auto *row = button ? button->parentItem() : nullptr;
+    const auto *strip = row ? row->parentItem() : nullptr;
+    constexpr qreal tolerance = 0.5;
+    return strip && button->isVisible() && button->isEnabled() && button->width() > 0 && button->height() > 0 &&
+        qAbs(strip->height() - 36) < tolerance && button->height() <= strip->height() + tolerance &&
+        qAbs(row->y() + button->y() + button->height() / 2 - strip->height() / 2) < tolerance &&
+        row->x() + button->x() >= -tolerance && row->x() + button->x() + button->width() <= strip->width() + tolerance;
+}
+
 QString text(SubtitleGridModel *grid, int row) {
     const auto *line = grid->dialogueAt(row);
     return line ? QString::fromStdString(line->Text.get()) : QString();
@@ -151,6 +258,47 @@ QString text(SubtitleGridModel *grid, int row) {
 bool writeFile(const QString &path, const QByteArray &data) {
     QFile file(path);
     return file.open(QIODevice::WriteOnly) && file.write(data) == data.size() && file.flush();
+}
+
+bool translationFallback() {
+    QTemporaryDir fixture(QStringLiteral("qt-mnemonic-catalog-XXXXXX"));
+    const auto localeDir = QStringLiteral("es/LC_MESSAGES");
+    if (!fixture.isValid() || !QDir(fixture.path()).mkpath(localeDir)) return false;
+
+    const QByteArray ids[]{"&Exact", "Exact", "Vie&w && &Act"};
+    const QByteArray translations[]{"Fallback(&F)", "Exact && unchanged", "&Ver && actuar(&A)..."};
+    constexpr quint32 count = 3, originals = 28, translated = originals + count * 8;
+    QByteArray mo, strings;
+    QDataStream stream(&mo, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream << quint32(0x950412de) << quint32(0) << count << originals << translated << quint32(0) << quint32(0);
+    for (const auto *table : {ids, translations}) {
+        for (quint32 i = 0; i < count; ++i) {
+            const auto &item = table[i];
+            stream << quint32(item.size()) << (translated + count * 8 + quint32(strings.size()));
+            strings += item;
+            strings += '\0';
+        }
+    }
+    stream.writeRawData(strings.constData(), int(strings.size()));
+    if (stream.status() != QDataStream::Ok ||
+        !writeFile(QDir(fixture.path()).filePath(localeDir + QStringLiteral("/aegisub.mo")), mo)) return false;
+
+    const auto previousDir = qgetenv("AEGISUB_PO_DIR");
+    const auto previousLanguage = qgetenv("AEGISUB_QT_LANGUAGE");
+    qputenv("AEGISUB_PO_DIR", fixture.path().toUtf8());
+    qputenv("AEGISUB_QT_LANGUAGE", "es");
+    const TranslationService test;
+    if (previousDir.isNull()) qunsetenv("AEGISUB_PO_DIR");
+    else qputenv("AEGISUB_PO_DIR", previousDir);
+    if (previousLanguage.isNull()) qunsetenv("AEGISUB_QT_LANGUAGE");
+    else qputenv("AEGISUB_QT_LANGUAGE", previousLanguage);
+
+    return test.language() == QStringLiteral("es") &&
+           test.t(QStringLiteral("Exact")) == QStringLiteral("Exact & unchanged") &&
+           test.t(QStringLiteral("&Exact")) == QStringLiteral("Fallback") &&
+           test.t(QStringLiteral("View & Act")) == QStringLiteral("Ver & actuar...") &&
+           test.t(QStringLiteral("Unknown & literal")) == QStringLiteral("Unknown & literal");
 }
 
 QByteArray readFile(const QString &path) {
@@ -281,6 +429,15 @@ int runStage15BReloadTest(QQmlApplicationEngine &engine) {
     auto *mru = vm(engine, "mruVM");
     CHECK(window && prefs && mru && consumers(engine, window), "restart did not restore preferences to consumers");
     CHECK(prefs->preferencePage() == interfacePage, "last preferences page did not restore");
+    auto *i18n = vm<TranslationService>(engine, "i18n");
+    const auto code = qEnvironmentVariable("STAGE15B_LANGUAGE");
+    const CatalogSample *sample = code == english ? &englishSample : nullptr;
+    for (const auto &candidate : samples)
+        if (candidate.code == code) sample = &candidate;
+    CHECK(i18n && sample && languageMatches(window, i18n, *sample), "language did not restore before QML creation" << code);
+    if (code == QStringLiteral("zh_CN")) {
+        CHECK(translatedMenus(window), "Chinese menu bar or Subtitle descendants did not restore");
+    }
     for (auto pair : {std::pair{"subtitles", "STAGE15B_RECENT_SUBTITLE"}, std::pair{"audio", "STAGE15B_RECENT_AUDIO"},
                       std::pair{"videos", "STAGE15B_RECENT_VIDEO"}}) {
         const auto expected = qEnvironmentVariable(pair.second);
@@ -299,7 +456,38 @@ int runStage15BIntegrationTest(QQmlApplicationEngine &engine) {
     auto *audio = vm<AudioViewModel>(engine, "audioVM");
     auto *video = vm<VideoViewModel>(engine, "videoVM");
     auto *mru = vm(engine, "mruVM");
-    CHECK(window && prefs && document && grid && undo && audio && video && mru, "root or context missing");
+    auto *i18n = vm<TranslationService>(engine, "i18n");
+    CHECK(window && prefs && document && grid && undo && audio && video && mru && i18n, "root or context missing");
+    CHECK(!i18n->forced() && languageMatches(window, i18n, englishSample), "missing isolated English baseline");
+    CHECK(translationFallback(), "exact-first mnemonic fallback did not preserve literal ampersands");
+    auto *languageAction = entry(menu(window, "View"), "Language...");
+    CHECK(languageAction && languageAction == languageMenuItem(window), "Language action is not under View");
+    const auto languages = i18n->availableLanguages();
+    const auto available = [&languages](const QString &code) {
+        for (const auto &value : languages) {
+            const auto language = value.toMap();
+            if (language.value(QStringLiteral("code")).toString() == code)
+                return !language.value(QStringLiteral("name")).toString().isEmpty();
+        }
+        return false;
+    };
+    CHECK(available(english), "English fallback not offered in language selectors");
+    const CatalogSample *localized = nullptr;
+    for (const auto &sample : samples) {
+        if (available(sample.code)) {
+            localized = &sample;
+            break;
+        }
+    }
+    if (localized) {
+        CHECK(setLanguageFromView(window, english, localized->code) && languageMatches(window, i18n, *localized),
+              "View Language did not apply the loaded catalog live" << localized->code << i18n->error());
+        if (localized->code == QStringLiteral("zh_CN")) {
+            CHECK(translatedMenus(window), "Chinese menu bar or Subtitle descendants did not retranslate live");
+        }
+    } else {
+        qInfo() << "Stage 15B: zh_CN, de and fr_FR catalogs unavailable; skipping non-English switching";
+    }
     QTemporaryDir fixture(QStringLiteral("stage15b-fixture-XXXXXX"));
     CHECK(fixture.isValid(), fixture.errorString());
     struct CloseMedia {
@@ -320,7 +508,21 @@ int runStage15BIntegrationTest(QQmlApplicationEngine &engine) {
     QTest::qWait(100);
     auto *settings = qobject_cast<QQuickWindow *>(object(window->property("preferencesWindow")));
     CHECK(settings && settings->isVisible(), "Alt+O did not open Preferences");
-    CHECK(page(settings, 0) && number(settings, levels, undoLevels), "cannot set Undo Levels");
+    CHECK(page(settings, 0), "cannot open Preferences General");
+    auto *languagePicker = control(settings, "preferencesLanguagePicker");
+    const auto &initial = localized ? *localized : englishSample;
+    CHECK(languagePicker && languagePicker->isVisible() && languagePicker->isEnabled() &&
+          languagePicker->property("currentValue").toString() == initial.code && settings->title() == initial.preferences,
+          "Preferences General did not reflect the current language" << initial.code);
+    if (localized) {
+        // Exercise the QML handler directly, as with the menu commands, to
+        // avoid native popup focus differences on the offscreen platform.
+        CHECK(selectLanguage(languagePicker, english) &&
+              QMetaObject::invokeMethod(languagePicker, "activated", Q_ARG(int, languagePicker->property("currentIndex").toInt())) &&
+              languageMatches(window, i18n, englishSample) && settings->title() == englishSample.preferences,
+              "Preferences General did not retranslate both open windows" << i18n->error());
+    }
+    CHECK(number(settings, levels, undoLevels), "cannot set Undo Levels");
     CHECK(page(settings, 2) && toggle(settings, follow, true) && audio->followPlayhead(), "follow not live");
     audio->setFollowPlayhead(false);
     CHECK(!control(settings, follow)->property("checked").toBool() && toggle(settings, follow, true), "follow not bidirectional");
@@ -336,7 +538,8 @@ int runStage15BIntegrationTest(QQmlApplicationEngine &engine) {
     config.close();
     CHECK(jsonKey(json, syntax) == QVariant(false) && jsonKey(json, follow) == QVariant(true) && jsonKey(json, sync) == QVariant(true) &&
           jsonKey(json, font).toInt() == fontSize && jsonKey(json, levels).toInt() == undoLevels &&
-          jsonKey(json, "Tool/Preferences/Page").toInt() == interfacePage, "config.json did not persist real keys");
+          jsonKey(json, languageKey).toString() == english && jsonKey(json, "Tool/Preferences/Page").toInt() == interfacePage,
+          "config.json did not persist real keys");
 
     grid->selectSingle(0);
     grid->toggleSelect(2);
@@ -359,9 +562,22 @@ int runStage15BIntegrationTest(QQmlApplicationEngine &engine) {
     CHECK(video->openLocalPath(y4m), "Unicode Y4M fixture failed" << video->lastError());
     video->closeVideo();
     CHECK(trigger(at(recentVideo, 0)) && video->filePath() == y4m, "Video Recent did not reopen Unicode filename");
+    const auto transportsFit = [&] {
+        return compactTransport(window, "audioPlayLineButton") && compactTransport(window, "videoPlayButton");
+    };
+    CHECK(QTest::qWaitFor(transportsFit, 2000), "Audio/Video play controls do not fit their 36 px strips in Full view");
+    const auto &restart = localized ? *localized : englishSample;
+    if (localized) {
+        CHECK(setLanguageFromView(window, english, localized->code) && languageMatches(window, i18n, *localized),
+              "cannot select the non-English language for restart" << localized->code << i18n->error());
+        CHECK(QTest::qWaitFor(transportsFit, 2000), "Localized play controls do not fit their 36 px strips" << localized->code);
+    }
     video->closeVideo();
+    const auto savedConfig = QJsonDocument::fromJson(readFile(prefs->configFilePath())).object();
+    CHECK(jsonKey(savedConfig, languageKey).toString() == restart.code, "App/Language was not written to config.json" << restart.code);
 
     auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("STAGE15B_LANGUAGE"), restart.code);
     environment.insert(QStringLiteral("STAGE15B_RECENT_VIDEO"), y4m);
     environment.insert(QStringLiteral("STAGE15B_RECENT_SUBTITLE"), ass);
     environment.insert(QStringLiteral("STAGE15B_RECENT_AUDIO"), wav);
@@ -373,6 +589,10 @@ int runStage15BIntegrationTest(QQmlApplicationEngine &engine) {
     CHECK(child.exitStatus() == QProcess::NormalExit && child.exitCode() == 0 && err.isEmpty() && out.contains("Stage 15B restart passed"),
           "restart failed" << child.exitCode() << out << err);
     qInfo().noquote() << QString::fromUtf8(out).trimmed();
+    if (localized) {
+        CHECK(setLanguageFromView(window, localized->code, english) && languageMatches(window, i18n, englishSample),
+              "cannot restore English after restart test" << i18n->error());
+    }
 
     auto *selected = menu(window, "Sort Selected Lines");
     auto *swap = entry(menu(window, "Subtitle"), "Swap Lines");

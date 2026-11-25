@@ -190,6 +190,7 @@ Item {
                 spacing: 2
 
                 TransportButton {
+                    objectName: "videoPlayButton"
                     text: videoVM.isPlaying ? i18n.t("Pause") : i18n.t("Play")
                     icon.source: videoVM.isPlaying ? "qrc:/icons/pause.svg" : "qrc:/icons/play_arrow.svg"
                     onClicked: videoVM.togglePlay()
