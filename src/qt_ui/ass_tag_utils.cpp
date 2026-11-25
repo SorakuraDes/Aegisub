@@ -3,10 +3,12 @@
 #include "../ass_dialogue.h"
 #include "../ass_style.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -34,38 +36,44 @@ bool isLetter(char c) {
 }
 
 template<class Visit>
-void scanTags(std::string_view text, Visit visit) {
+void scanTagRange(std::string_view text, size_t begin, size_t limit, size_t block, size_t close,
+                  unsigned transformDepth, Visit& visit) {
+    const auto contents = text.substr(0, limit);
+    while ((begin = contents.find('\\', begin)) != text.npos) {
+        const auto name = contents.find_first_not_of(whitespace, begin + 1);
+        if (name == text.npos) break;
+        auto nameEnd = name;
+        while (nameEnd < limit && isLetter(text[nameEnd])) ++nameEnd;
+        const auto tagName = text.substr(name, nameEnd - name);
+        const auto separator = contents.find_first_of("(\\", nameEnd);
+        if (separator != text.npos && text[separator] == '(') {
+            size_t depth = 1, end = separator + 1;
+            for (; end < limit && depth; ++end) {
+                if (text[end] == '(') ++depth;
+                else if (text[end] == ')') --depth;
+            }
+            if (!depth && trim(text.substr(nameEnd, separator - nameEnd)).empty()) {
+                visit(Tag{tagName, text.substr(separator + 1, end - separator - 2),
+                          begin, end, block, close, true});
+                if (tagName == "t" && transformDepth)
+                    scanTagRange(text, separator + 1, end - 1, block, close, transformDepth - 1, visit);
+            }
+            begin = end;
+        }
+        else {
+            const auto end = separator == text.npos ? limit : separator;
+            visit(Tag{tagName, text.substr(nameEnd, end - nameEnd), begin, end, block, close, false});
+            begin = end;
+        }
+    }
+}
+
+template<class Visit>
+void scanTags(std::string_view text, Visit visit, unsigned transformDepth = 0) {
     for (size_t block = 0; (block = text.find('{', block)) != text.npos;) {
         const auto close = text.find('}', block + 1);
         if (close == text.npos) break;
-        const auto contents = text.substr(0, close);
-        for (size_t begin = block + 1; (begin = contents.find('\\', begin)) != text.npos;) {
-            auto name = contents.find_first_not_of(whitespace, begin + 1);
-            if (name == text.npos) break;
-            auto nameEnd = name;
-            while (nameEnd < close && isLetter(text[nameEnd])) ++nameEnd;
-            const auto separator = contents.find_first_of("(\\", nameEnd);
-            if (separator != text.npos && text[separator] == '(') {
-                // Skip the entire argument group, including tags in transforms.
-                size_t depth = 1, end = separator + 1;
-                for (; end < close && depth; ++end) {
-                    if (text[end] == '(') ++depth;
-                    else if (text[end] == ')') --depth;
-                }
-                if (!depth && trim(text.substr(nameEnd, separator - nameEnd)).empty()) {
-                    visit(Tag{text.substr(name, nameEnd - name),
-                              text.substr(separator + 1, end - separator - 2),
-                              begin, end, block, close, true});
-                }
-                begin = end;
-            }
-            else {
-                const auto end = separator == text.npos ? close : separator;
-                visit(Tag{text.substr(name, nameEnd - name), text.substr(nameEnd, end - nameEnd),
-                          begin, end, block, close, false});
-                begin = end;
-            }
-        }
+        scanTagRange(text, block + 1, close, block, close, transformDepth, visit);
         block = close + 1;
     }
 }
@@ -416,6 +424,83 @@ std::string setRectClipTag(std::string_view text, int x1, int y1, int x2, int y2
 
 std::string removeRectClipTag(std::string_view text) {
     return applyEdits(text, rectEdits(text));
+}
+
+std::string resampleLineTags(std::string_view text, double scaleX, double scaleY) {
+    if (!std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0 || scaleY <= 0 ||
+        (scaleX == 1 && scaleY == 1)) return std::string(text);
+
+    // Fixed notation is understood by libass and avoids binary floating-point noise.
+    const auto format = [](double value) {
+        char buffer[384];
+        const auto result = std::to_chars(buffer, buffer + sizeof buffer, value, std::chars_format::fixed, 6);
+        auto end = result.ptr;
+        while (end[-1] == '0') --end;
+        if (end[-1] == '.') --end;
+        std::string number(buffer, end);
+        return number == "-0" ? std::string("0") : number;
+    };
+
+    std::vector<Edit> edits;
+    scanTags(text, [&](Tag tag) {
+        if (tag.name == "fs" && scaleY != 1 && !tag.parenthesized) {
+            const auto numberStart = tag.args.find_first_not_of(whitespace);
+            if (numberStart == tag.args.npos || tag.args[numberStart] == '+' || tag.args[numberStart] == '-') return;
+            double size;
+            size_t consumed;
+            if (!readScalar(tag, size, &consumed) || !std::isfinite(size * scaleY)) return;
+            if (consumed < tag.args.size() && whitespace.find(tag.args[consumed]) == whitespace.npos) return;
+            const auto argStart = tag.end - tag.args.size();
+            tag.begin = argStart + numberStart;
+            tag.end = argStart + consumed;
+            edits.push_back({tag, format(size * scaleY)});
+            return;
+        }
+
+        std::array<double, 4> coords;
+        size_t count;
+        const bool rect = clipTag(tag);
+        std::string_view timing;
+        if (rect) {
+            std::array<int, 4> clip;
+            if (!parseArgs(tag, clip)) return;
+            std::copy(clip.begin(), clip.end(), coords.begin());
+            count = clip.size();
+        }
+        else if (tag.name == "pos" || tag.name == "org") {
+            std::array<double, 2> point;
+            if (!parseArgs(tag, point)) return;
+            std::copy(point.begin(), point.end(), coords.begin());
+            count = point.size();
+        }
+        else if (tag.name == "move") {
+            MoveArgs move;
+            if (!readMoveArgs(tag, move)) return;
+            coords = move.points;
+            count = coords.size();
+            timing = move.timing;
+        }
+        else return;
+
+        std::string replacement = "\\";
+        replacement += tag.name;
+        replacement += '(';
+        for (size_t i = 0; i < count; ++i) {
+            const double value = coords[i] * (i % 2 == 0 ? scaleX : scaleY);
+            if (!std::isfinite(value)) return;
+            if (i) replacement += ',';
+            if (rect) {
+                const auto rounded = std::clamp(std::round(value), double(std::numeric_limits<int>::min()),
+                                                double(std::numeric_limits<int>::max()));
+                replacement += std::to_string(static_cast<int>(rounded));
+            }
+            else replacement += format(value);
+        }
+        replacement += timing;
+        replacement += ')';
+        edits.push_back({tag, std::move(replacement)});
+    }, 16); // bound recursion for malformed or excessively nested transforms
+    return applyEdits(text, edits);
 }
 
 std::pair<double, double> defaultAnchorPos(const AssDialogue& line, const AssStyle* style,

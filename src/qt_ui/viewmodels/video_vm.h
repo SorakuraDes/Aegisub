@@ -122,6 +122,7 @@ public:
     Q_INVOKABLE void stepFrame(int delta);
     Q_INVOKABLE void seekToTimeMs(int ms);
     Q_INVOKABLE void seekToActiveLine();
+    Q_INVOKABLE void seekToActiveLineEnd();
     Q_INVOKABLE void togglePlay();
 
     /// New/Open replaced the document: refresh the libass track.

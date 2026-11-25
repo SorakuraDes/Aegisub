@@ -19,6 +19,7 @@
 #include "viewmodels/theme_vm.h"
 #include "ass_syntax_highlighter.h"
 #include "viewmodels/properties_vm.h"
+#include "viewmodels/resample_vm.h"
 #include "viewmodels/search_vm.h"
 #include "viewmodels/shift_times_vm.h"
 #include "viewmodels/styles_vm.h"
@@ -36,6 +37,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QtQml>
+#include <QWindow>
 
 #include <exception>
 
@@ -140,16 +142,11 @@ private:
     EditBoxViewModel *editBox_;
 };
 
-/// Routes Ctrl+S / Ctrl+Shift+S to the QML window.
-///
-/// Registering both as QML `Shortcut`s does not work: Qt's shortcut matcher
-/// treats Ctrl+S and Ctrl+Shift+S as an ambiguous pair for the same key (the
-/// Shift modifier is not distinguishing for letter keys), so neither fires.
-/// An application-level filter accepts the ShortcutOverride (suppressing the
-/// QML shortcuts entirely) and then dispatches the two cases itself.
-class FileShortcutFilter final : public QObject {
+// Qt's shortcut matcher can treat Ctrl+letter and Ctrl+Shift+letter as
+// ambiguous. Dispatch the exact save and split key combinations ourselves.
+class MainShortcutFilter final : public QObject {
 public:
-    explicit FileShortcutFilter(QObject *rootObject, QObject *parent = nullptr)
+    explicit MainShortcutFilter(QObject *rootObject, QObject *parent = nullptr)
     : QObject(parent)
     , root_(rootObject)
     {
@@ -164,7 +161,11 @@ protected:
             return false;
 
         auto *key_event = static_cast<QKeyEvent *>(event);
-        if (key_event->key() != Qt::Key_S)
+        const bool split = key_event->key() == Qt::Key_D;
+        if (key_event->key() != Qt::Key_S && !split)
+            return false;
+        if (QGuiApplication::focusWindow() != root_ ||
+            (split && !root_->property("canSplit").toBool()))
             return false;
 
         const Qt::KeyboardModifiers mods = key_event->modifiers();
@@ -177,8 +178,9 @@ protected:
         }
 
         if (!key_event->isAutoRepeat() && root_) {
-            const char *method = mods.testFlag(Qt::ShiftModifier) ? "openSaveAsDialog"
-                                                                  : "saveDocument";
+            const bool shift = mods.testFlag(Qt::ShiftModifier);
+            const char *method = split ? (shift ? "splitAfterFrame" : "splitBeforeFrame")
+                                       : (shift ? "openSaveAsDialog" : "saveDocument");
             if (!QMetaObject::invokeMethod(root_, method, Qt::DirectConnection))
                 qWarning() << "aegisub-qt: Main.qml has no" << method << "function";
         }
@@ -192,7 +194,25 @@ private:
 
 } // namespace
 
+#ifdef AEGISUB_STAGE15_TEST
+#include <QTemporaryDir>
+#include <cstdio>
+int runStage15IntegrationTest(QQmlApplicationEngine &engine);
+#endif
+
 int main(int argc, char *argv[]) {
+#ifdef AEGISUB_STAGE15_TEST
+    qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &, const QString &message) {
+        std::fprintf(type == QtInfoMsg || type == QtDebugMsg ? stdout : stderr,
+                     "%s\n", qPrintable(message));
+    });
+    QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
+    if (!testConfig.isValid()) {
+        qCritical() << testConfig.errorString();
+        return 1;
+    }
+    qputenv("AEGISUB_QT_CONFIG_DIR", testConfig.path().toUtf8());
+#endif
     QGuiApplication app(argc, argv);
     app.setApplicationName("aegisub-qt");
 
@@ -235,7 +255,9 @@ int main(int argc, char *argv[]) {
     // A/V synchronised playback: the video transport starts the audio player at
     // the current video position and then follows the audio clock.
     videoVM.setAudioViewModel(&audioVM);
+    gridModel.setVideoViewModel(&videoVM);
     ShiftTimesViewModel shiftTimesVM(&script, &gridModel, &videoVM);
+    ResampleViewModel resampleVM(&script, &videoVM);
     VisualToolsViewModel visualToolsVM(&script, &gridModel, &videoVM, &undoManager);
 
     // New/Open does not go through AssFile::Commit, so the style index has to
@@ -286,6 +308,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("visualToolsVM", &visualToolsVM);
     engine.rootContext()->setContextProperty("audioVM", &audioVM);
     engine.rootContext()->setContextProperty("shiftTimesVM", &shiftTimesVM);
+    engine.rootContext()->setContextProperty("resampleVM", &resampleVM);
 
     // Command line: an optional subtitle file plus "--video <path>" and
     // "--audio <path>", which lets the automated checks open everything at once.
@@ -321,11 +344,8 @@ int main(int argc, char *argv[]) {
     if (engine.rootObjects().isEmpty())
         return 1;
 
-    // Ctrl+S / Ctrl+Shift+S must be dispatched here; see FileShortcutFilter.
-    if (QObject *root_object = engine.rootObjects().first()) {
-        auto *file_filter = new FileShortcutFilter(root_object, &app);
-        app.installEventFilter(file_filter);
-    }
+    MainShortcutFilter mainShortcutFilter(engine.rootObjects().first());
+    app.installEventFilter(&mainShortcutFilter);
 
     // Open the command-line media only after QML is up: VideoPanel would miss
     // the frameReady() signal emitted during a pre-engine open and show a black
@@ -367,5 +387,9 @@ int main(int argc, char *argv[]) {
             qWarning() << "Failed to flush options on exit:" << error;
     });
 
+#ifdef AEGISUB_STAGE15_TEST
+    return runStage15IntegrationTest(engine);
+#else
     return app.exec();
+#endif
 }

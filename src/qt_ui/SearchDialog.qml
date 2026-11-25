@@ -21,6 +21,8 @@ Window {
     readonly property int fieldHeight: themeVM.controlHeight
     readonly property real labelWidth: Math.max(findLabel.implicitWidth, replaceLabel.implicitWidth, fieldLabel.implicitWidth)
 
+    Shortcut { sequence: "F3"; onActivated: searchVM.findNext() }
+
     function focusField(useReplace) {
         if (useReplace) {
             replaceField.forceActiveFocus()

@@ -40,6 +40,10 @@ std::string setScaleTags(std::string_view text, double x, double y);
 std::string setRectClipTag(std::string_view text, int x1, int y1, int x2, int y2);
 std::string removeRectClipTag(std::string_view text);
 
+// Scale positions, moves, origins, rectangular clips, and absolute font sizes
+// in place, including tags in transforms. Vector clips and move times are kept.
+std::string resampleLineTags(std::string_view text, double scaleX, double scaleY);
+
 // wx visual-tool anchor: explicit pos, then move start, then alignment/margins.
 std::pair<double, double> defaultAnchorPos(const AssDialogue& line, const AssStyle* style,
                                            int scriptWidth, int scriptHeight);

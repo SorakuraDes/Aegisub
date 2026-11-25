@@ -21,6 +21,7 @@ qt6_moc = qt6.preprocess(
         'viewmodels/video_vm.h',
         'viewmodels/audio_vm.h',
         'viewmodels/shift_times_vm.h',
+        'viewmodels/resample_vm.h',
         'viewmodels/visual_tools_vm.h',
         'visual_overlay_item.h',
         'video_viewport_item.h',
@@ -118,9 +119,8 @@ av_qt_core = static_library('av_qt_core',
     cpp_args: ['/utf-8'],
 )
 
-aegisub_qt = executable('aegisub-qt',
+qt_frontend = static_library('qt-frontend',
     files(
-        'main.cpp',
         'aegisub_core.cpp',
         'viewmodels/app_info_vm.cpp',
         'viewmodels/about_vm.cpp',
@@ -138,6 +138,7 @@ aegisub_qt = executable('aegisub-qt',
         'viewmodels/video_vm.cpp',
         'viewmodels/audio_vm.cpp',
         'viewmodels/shift_times_vm.cpp',
+        'viewmodels/resample_vm.cpp',
         'ass_tag_utils.cpp',
         'viewmodels/visual_tools_vm.cpp',
         'visual_overlay_item.cpp',
@@ -147,12 +148,33 @@ aegisub_qt = executable('aegisub-qt',
     ),
     qt6_moc,
     highlighter_moc,
-    qt6_resources,
     version_h,
     include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.'), include_directories('..')],
-    link_with: [libaegisub, ass_qt_core, av_qt_core],
     dependencies: [qt6_dep] + deps,
     cpp_args: ['/utf-8'],
+)
+
+qt_frontend_dep = declare_dependency(
+    include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.'), include_directories('..')],
+    link_with: [qt_frontend, av_qt_core, ass_qt_core, libaegisub],
+    dependencies: [qt6_dep] + deps,
+)
+
+aegisub_qt = executable('aegisub-qt', 'main.cpp', qt6_resources,
+    dependencies: qt_frontend_dep,
+    cpp_args: ['/utf-8'],
+)
+
+qt_test_dep = dependency('qt6', modules: ['Test'])
+stage15_integration_test = executable('qt-stage15-integration-test',
+    files('main.cpp', 'stage15_integration_test.cpp'), qt6_resources,
+    dependencies: [qt_frontend_dep, qt_test_dep],
+    cpp_args: ['/utf-8', '-DAEGISUB_STAGE15_TEST'],
+    build_by_default: false,
+)
+test('qt-stage15-integration', stage15_integration_test,
+    env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
+    timeout: 60,
 )
 
 ass_tag_utils_test = executable('qt-ass-tag-utils-test',

@@ -108,6 +108,14 @@ int main() {
           "clamp and replace scale tags without touching transforms");
     check(setScaleTags(R"({\fscy102})" + chinese, -2, 93.5) == R"({\fscx1\fscy93.5})" + chinese,
           "insert missing scale axis");
+    const std::string original = R"({note}{\pos(1.25,4)\move(-2,3,4,5, +010 , 20 )\org(6,7)\clip(-3,2,8,10)\iclip(1,2,3,4)\fs12.5 \fs+2\fs-1\fscx100}text{\t(0,20,\fs8\clip(2,4,6,8))\clip(m 0 0 l 1 1)})";
+    check(resampleLineTags(original, 0.5, 2) ==
+          R"({note}{\pos(0.625,8)\move(-1,6,2,10, +010 , 20 )\org(3,14)\clip(-2,4,4,20)\iclip(1,4,2,8)\fs25 \fs+2\fs-1\fscx100}text{\t(0,20,\fs16\clip(1,8,3,16))\clip(m 0 0 l 1 1)})",
+          "nonuniform resampling preserves timing, relative sizes, drawings and transform syntax");
+    check(resampleLineTags(original, 1, 1) == original && resampleLineTags(original, 0, 2) == original,
+          "leave text unchanged for identity and invalid scales");
+    const std::string malformed = R"(plain \pos(4,8){\pos(2,3,4)\fs1x\move(1,2,3,4,5)\iclip(1,2,,3)})";
+    check(resampleLineTags(malformed, 2, 3) == malformed, "leave malformed tags and plain text unchanged");
     line.Margin = {0, 5, 0};
     style.Margin = {11, 22, 33};
     style.alignment = 9;

@@ -4,6 +4,18 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 15：原版菜单与高频编辑命令
+
+基线 `feature@276856d8b`，本阶段按双轨构建和 Qt 验收封板。Qt 主菜单按 Stage 15 支持范围对齐[原版菜单](../src/libresrc/default_menu.json)和[默认快捷键](../src/libresrc/default_hotkey.json)，Automation 留待 Stage 16。按本阶段约定，`Delete` 删除字幕行、`Ctrl+Space` 播放活动行音频；`Alt+Up` / `Alt+Down` 只注册快捷键，不出现在主菜单。
+
+- [主菜单](../src/qt_ui/Main.qml)依次为 File、Edit、Subtitle、Timing、Video、Audio、View、Help。普通项、图标项、勾选项和子菜单入口均复用 [ShortcutMenuItem](../src/qt_ui/ShortcutMenuItem.qml)（30 px / 13 px）；Options 使用 16×16 齿轮，勾选框 14×14。`Ctrl+D` / `Ctrl+Shift+D` 只用于按帧拆行，`Ctrl+1` / `Ctrl+2` 按视频 START/END 映射跳活动行首末帧；新增 `F3` 和 `Alt+O`，不再绑定 `Ctrl+J`。Spectrum / Waveform 共享同一状态并互斥。
+- [网格模型](../src/qt_ui/viewmodels/subtitle_grid_model.cpp)按选中行顺序复制标准 `Dialogue:` / `Comment:`，支持原版字幕行与普通文本粘贴；从活动行后插入并选中新行。键盘剪贴板命令只在主窗口的非文本焦点触发。拆行按原版帧边界分配当前帧，帧在原行外时追加该帧的副本；合并取选中行时间跨度，Concatenate 以 `\N` 连接，Keep First 保留首行正文。帧卡点、相邻连续化、七种稳定排序和多选移位均单次提交；重排跟随原活动行及选区。
+- [重采样窗口](../src/qt_ui/ResampleDialog.qml)支持输入目标分辨率、From Video 和 Esc。[重采样 VM](../src/qt_ui/viewmodels/resample_vm.cpp)一次提交脚本头、样式与字幕；字号、描边、阴影以 Y 比例缩放，边距按轴缩放。[标签工具](../src/qt_ui/ass_tag_utils.cpp)缩放 `\pos`、`\move`、`\org`、矩形裁剪和绝对 `\fs`，保留 move 时间、相对字号、向量裁剪、其他标签和自动化模板代码。未接入原版的宽高比策略和色彩转换。
+
+**构建与验证**： [Qt 单目标](../.build-tools/stage15/build-qt-final.log)、[wx + Qt 双轨](../.build-tools/stage15/build-dual.log)均 `EXIT 0`；[Qt 单测](../.build-tools/stage15/test-qt.log) `3/3` 通过（ASS 标签、语法高亮、音频频谱）。首次受限构建不能读取既有 zlib 目录；切换到完全权限后完成构建，未更改 Windows 文件权限。
+
+- Windows UI Automation 已核对八栏菜单和子菜单顺序，96 DPI 下普通、图标、勾选及子菜单行均为 30 px；验证合并、连续化、Start Time 排序、两方向移位、视频首末帧跳转、两种拆行及一次撤销。1280×720 → 1920×1080 已验证持久化脚本分辨率、字号 20 → 30、描边/阴影、边距和 `\pos(160,100)` → `\pos(240,150)`，一次撤销整体恢复。[通过的桌面用例及截图](../.build-tools/stage15/20261125-101511-49716-Light/acceptance.log)，[最终构建对菜单高度和排序/移位的复测](../.build-tools/stage15/20261125-102317-53504-Light/acceptance.log)。完整通过的测试实例退出 0，stderr 只有普通文档加载/保存记录。后续 Windows 复跑受前台激活限制，改由[无头 Qt 集成测试](../src/qt_ui/stage15_integration_test.cpp)补齐：在真实主窗注入按键，验证标准 Dialogue/Comment 剪贴板往返、剪切/粘贴单次撤销、EditBox 文本焦点隔离、Alt+O 打开 Options、F3 选中下一个匹配行，以及 Ctrl+3/4 卡到 Dummy Video 帧边界并逐步撤销。Meson Qt 用例合计 4/4 通过，集成测试退出 0、stderr 为空；最终双轨构建退出 0。
+
 ## Stage 14：视频视觉工具进阶（M3 路线 B）
 
 基线 `feature@4e9e36abb`，本阶段未提交。Qt 视频栏工具依次为 Std / Pos / Move / RotZ / Scale / Clip。36 px 工具栏复用 28 px 紧凑按钮和 18 px SVG；空间不足时纵向滚动，键盘聚焦时自动露出目标按钮。三个新增图标均为 [Google 官方 Material Symbols Outlined](https://github.com/google/material-design-icons/tree/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/symbols/web)，来源与 Apache-2.0 许可见[图标说明](../src/qt_ui/icons/README.md)。

@@ -6,6 +6,7 @@
 
 #include <QAbstractListModel>
 #include <QList>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 
@@ -14,6 +15,7 @@
 class AssDialogue;
 class AssFile;
 class UndoManager;
+class VideoViewModel;
 
 /// List model over the dialogue lines of the current AssFile.
 ///
@@ -49,7 +51,14 @@ public:
     };
     Q_ENUM(Roles)
 
+    enum SortField {
+        SortStart, SortEnd, SortStyle, SortActor, SortEffect, SortLayer, SortText,
+        SortStrippedText,
+    };
+    Q_ENUM(SortField)
+
     SubtitleGridModel(AssFile *file, UndoManager *undoManager, QObject *parent = nullptr);
+    void setVideoViewModel(VideoViewModel *video);
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -84,7 +93,19 @@ public:
     /// Ctrl+A (when the EditBox does not have the keyboard focus).
     Q_INVOKABLE void selectAll();
 
-    // ---- Row operations (each commits once as COMMIT_DIAG_ADDREM) ----------
+    // ---- Row operations --------------------------------------------------
+
+    Q_INVOKABLE void copySelectedRows();
+    Q_INVOKABLE void cutSelectedRows();
+    Q_INVOKABLE void pasteRows();
+    /// True splits before the current frame; false splits after it.
+    Q_INVOKABLE void splitAtVideoFrame(bool keepBefore);
+    Q_INVOKABLE void joinSelectedRows(bool concatenate);
+    Q_INVOKABLE void snapToVideo(bool start);
+    Q_INVOKABLE void makeTimesContinuous(bool changeStart);
+    Q_INVOKABLE void sortAllLines(int field);
+    /// Move one row up (negative) or down (positive).
+    Q_INVOKABLE void moveSelectedRows(int delta);
 
     /// Rebuild the index table from the current AssFile contents and select the
     /// first line (used when a document is created or opened).
@@ -126,6 +147,11 @@ private:
 
     /// Append a default line to an empty file and select it.
     int appendDefaultLine();
+    bool copySelectionToClipboard() const;
+    int deleteSelectedRows(const QString &description);
+    QSet<AssDialogue *> selectedDialogues() const;
+    void selectDialogues(const QSet<AssDialogue *> &selection, AssDialogue *active,
+                         AssDialogue *anchor = nullptr);
     /// Commit a line-list change and leave the UndoManager to snapshot it.
     void commitRowChange(const QString &description, AssDialogue *line = nullptr);
     /// Select `line` and return its row index (-1 if it is not in the file).
@@ -147,6 +173,7 @@ private:
 
     AssFile *file_;
     UndoManager *undo_manager_;
+    QPointer<VideoViewModel> video_vm_;
     std::vector<AssDialogue *> rows_;
     int active_row_ = -1;
     QSet<int> selected_rows_;

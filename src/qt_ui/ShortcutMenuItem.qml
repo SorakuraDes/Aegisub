@@ -71,6 +71,7 @@ MenuItem {
 
         Label {
             Layout.fillWidth: true
+            Layout.rightMargin: control.subMenu && control.arrow ? control.arrow.width + 8 : 0
             Layout.alignment: Qt.AlignVCenter
             text: control.text
             font: control.font

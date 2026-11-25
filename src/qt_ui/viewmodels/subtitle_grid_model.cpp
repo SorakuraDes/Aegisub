@@ -7,16 +7,21 @@
 
 #include "subtitle_grid_model.h"
 #include "undo_manager.h"
+#include "video_vm.h"
 
 #include "../commit_bridge.h"
 
 #include "../../ass_dialogue.h"
 
 #include <libaegisub/ass/time.h>
+#include <libaegisub/exception.h>
 
-#include <QString>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QStringList>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 namespace {
@@ -54,6 +59,10 @@ SubtitleGridModel::SubtitleGridModel(AssFile *file, UndoManager *undoManager, QO
         connect(undo_manager_, &UndoManager::restored, this, &SubtitleGridModel::onRestored);
 
     refresh();
+}
+
+void SubtitleGridModel::setVideoViewModel(VideoViewModel *video) {
+    video_vm_ = video;
 }
 
 void SubtitleGridModel::rebuildRows() {
@@ -149,6 +158,30 @@ int SubtitleGridModel::indexOf(const AssDialogue *line) const {
 void SubtitleGridModel::onFileCommitted(int type, const AssDialogue *single_line) {
     if (!file_)
         return;
+
+    // Reorders preserve the selected dialogue identities and range anchor.
+    if (type == AssFile::COMMIT_ORDER) {
+        const auto selection = selectedDialogues();
+        auto *active = getActiveDialogue();
+        auto *anchor = dialogueAt(anchor_row_);
+        const int old_active = active_row_;
+        const int old_count = selectionCount();
+        beginResetModel();
+        rebuildRows();
+        selected_rows_.clear();
+        for (int row = 0; row < lineCount(); ++row) {
+            if (selection.contains(dialogueAt(row)))
+                selected_rows_.insert(row);
+        }
+        active_row_ = indexOf(active);
+        anchor_row_ = indexOf(anchor);
+        endResetModel();
+        if (old_count != selectionCount())
+            emit selectionCountChanged();
+        if (old_active != active_row_)
+            emit activeRowChanged();
+        return;
+    }
 
     // Changes to the shape of the line list invalidate the whole index.
     if (type == AssFile::COMMIT_NEW
@@ -558,6 +591,10 @@ void SubtitleGridModel::deleteRow(int row) {
 }
 
 int SubtitleGridModel::deleteSelectedRows() {
+    return deleteSelectedRows(QStringLiteral("Delete lines"));
+}
+
+int SubtitleGridModel::deleteSelectedRows(const QString &description) {
     if (!file_ || rows_.empty())
         return 0;
 
@@ -576,12 +613,13 @@ int SubtitleGridModel::deleteSelectedRows() {
     if (targets.empty())
         return 0;
 
-    // Unlink everything before freeing anything, so the intrusive list is
-    // consistent for the UndoManager snapshot taken by Commit.
-    for (auto *target : targets)
+    // Keep removed rows alive until all commit listeners have seen the change.
+    std::vector<std::unique_ptr<AssDialogue>> removed;
+    removed.reserve(targets.size());
+    for (auto *target : targets) {
         file_->Events.erase(file_->Events.iterator_to(*target));
-    for (auto *target : targets)
-        delete target;
+        removed.emplace_back(target);
+    }
 
     if (file_->Events.empty()) {
         auto *replacement = new AssDialogue;
@@ -589,9 +627,268 @@ int SubtitleGridModel::deleteSelectedRows() {
         file_->Events.push_back(*replacement);
     }
 
-    // One commit for the whole batch: a single Ctrl+Z brings every line back.
-    commitRowChange(QStringLiteral("Delete lines"));
-
-    selectOnly(rows_.empty() ? -1 : std::min(selected.first(), int(rows_.size()) - 1));
+    commitRowChange(description);
+    selectOnly(std::min(selected.first(), lineCount() - 1));
     return int(targets.size());
+}
+
+QSet<AssDialogue *> SubtitleGridModel::selectedDialogues() const {
+    QSet<AssDialogue *> selection;
+    for (int row : selected_rows_) {
+        if (auto *line = dialogueAt(row))
+            selection.insert(line);
+    }
+    return selection;
+}
+
+void SubtitleGridModel::selectDialogues(const QSet<AssDialogue *> &selection,
+                                        AssDialogue *active, AssDialogue *anchor) {
+    QSet<int> indices;
+    for (int row = 0; row < lineCount(); ++row) {
+        if (selection.contains(dialogueAt(row)))
+            indices.insert(row);
+    }
+    const int active_index = indexOf(active);
+    anchor_row_ = anchor ? indexOf(anchor) : active_index;
+    applySelection(indices, active_index);
+}
+
+bool SubtitleGridModel::copySelectionToClipboard() const {
+    auto *clipboard = QGuiApplication::clipboard();
+    if (!clipboard)
+        return false;
+
+    QStringList entries;
+    for (int row : sortedSelectedRows()) {
+        if (const auto *line = dialogueAt(row))
+            entries.append(QString::fromStdString(line->GetEntryData()));
+    }
+    if (entries.isEmpty())
+        return false;
+
+    clipboard->setText(entries.join(QLatin1Char('\n')));
+    return true;
+}
+
+void SubtitleGridModel::copySelectedRows() {
+    copySelectionToClipboard();
+}
+
+void SubtitleGridModel::cutSelectedRows() {
+    if (copySelectionToClipboard())
+        deleteSelectedRows(QStringLiteral("Cut lines"));
+}
+
+void SubtitleGridModel::pasteRows() {
+    auto *clipboard = QGuiApplication::clipboard();
+    if (!file_ || !clipboard)
+        return;
+
+    QString data = clipboard->text();
+    data.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    data.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    const auto entries = data.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    auto pos = file_->Events.end();
+    if (auto *active = getActiveDialogue()) {
+        pos = file_->Events.iterator_to(*active);
+        ++pos;
+    }
+    QSet<AssDialogue *> pasted;
+    AssDialogue *first = nullptr;
+
+    for (const auto &entry : entries) {
+        const auto text = toUtf8StdString(entry);
+        std::unique_ptr<AssDialogue> line;
+        if (entry.startsWith(QLatin1String("Dialogue:")) || entry.startsWith(QLatin1String("Comment:"))) {
+            auto raw = text;
+            const auto field = raw.find(':') + 1;
+            if (field == raw.size() || raw[field] != ' ')
+                raw.insert(field, 1, ' ');
+            try {
+                line = std::make_unique<AssDialogue>(raw);
+            } catch (const agi::Exception &) {
+                // Keep malformed ASS clipboard entries as plain text.
+            } catch (const std::bad_cast &) {
+                // Numeric ASS fields use boost::lexical_cast.
+            }
+        }
+        if (!line) {
+            line = std::make_unique<AssDialogue>();
+            line->Text = text;
+        }
+        if (!first)
+            first = line.get();
+        pasted.insert(line.get());
+        file_->Events.insert(pos, *line.release());
+    }
+    if (!first)
+        return;
+
+    commitRowChange(QStringLiteral("Paste lines"));
+    selectDialogues(pasted, first);
+}
+
+void SubtitleGridModel::splitAtVideoFrame(bool keepBefore) {
+    if (!file_ || !video_vm_ || !video_vm_->hasVideo())
+        return;
+    const int frame = video_vm_->currentFrame();
+    if (frame < 0)
+        return;
+
+    const auto selected = sortedSelectedRows();
+    QSet<AssDialogue *> copies;
+    AssDialogue *first = nullptr;
+    for (qsizetype begin = 0; begin < selected.size();) {
+        qsizetype end = begin + 1;
+        while (end < selected.size() && selected[end] == selected[end - 1] + 1)
+            ++end;
+
+        // Keep each contiguous block of copies after its original block.
+        auto pos = file_->Events.iterator_to(*dialogueAt(selected[end - 1]));
+        ++pos;
+        for (; begin < end; ++begin) {
+            auto *source = dialogueAt(selected[begin]);
+            auto *copy = new AssDialogue(*source);
+            const int start_frame = video_vm_->frameAtTimeMs(source->Start, false);
+            const int end_frame = video_vm_->frameAtTimeMs(source->End, true);
+            if (frame < start_frame || frame > end_frame) {
+                copy->Start = video_vm_->timeAtFrameMs(frame, false);
+                copy->End = video_vm_->timeAtFrameMs(frame, true);
+            } else {
+                source->End = video_vm_->timeAtFrameMs(frame - (keepBefore ? 1 : 0), true);
+                copy->Start = video_vm_->timeAtFrameMs(frame + (keepBefore ? 0 : 1), false);
+            }
+            file_->Events.insert(pos, *copy);
+            copies.insert(copy);
+            if (!first)
+                first = copy;
+        }
+    }
+    if (!first)
+        return;
+
+    aegisub_qt::commit(file_, "Split lines", AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_TIME);
+    selectDialogues(copies, first);
+}
+
+void SubtitleGridModel::joinSelectedRows(bool concatenate) {
+    const auto selected = sortedSelectedRows();
+    if (!file_ || selected.size() < 2)
+        return;
+
+    auto *first = dialogueAt(selected.first());
+    std::string text;
+    if (concatenate)
+        text = first->Text.get();
+    std::vector<std::unique_ptr<AssDialogue>> removed;
+    removed.reserve(size_t(selected.size() - 1));
+    for (qsizetype i = 1; i < selected.size(); ++i) {
+        auto *line = dialogueAt(selected[i]);
+        if (concatenate) {
+            text += "\\N";
+            text += line->Text.get();
+        }
+        first->Start = std::min(first->Start, line->Start);
+        first->End = std::max(first->End, line->End);
+        file_->Events.erase(file_->Events.iterator_to(*line));
+        removed.emplace_back(line);
+    }
+    if (concatenate)
+        first->Text = text;
+
+    aegisub_qt::commit(file_, "Join lines", AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+    selectLine(first);
+}
+
+void SubtitleGridModel::snapToVideo(bool start) {
+    if (!file_ || !video_vm_ || !video_vm_->hasVideo())
+        return;
+    const int frame = video_vm_->currentFrame();
+    if (frame < 0)
+        return;
+
+    const agi::Time frame_start = video_vm_->timeAtFrameMs(frame, false);
+    const agi::Time frame_end = video_vm_->timeAtFrameMs(frame, true);
+    bool changed = false;
+    for (auto *line : selectedDialogues()) {
+        const auto new_start = start ? frame_start : std::min(line->Start, frame_start);
+        const auto new_end = start ? std::max(line->End, frame_end) : frame_end;
+        if (line->Start != new_start || line->End != new_end) {
+            line->Start = new_start;
+            line->End = new_end;
+            changed = true;
+        }
+    }
+    if (changed)
+        aegisub_qt::commit(file_, "Snap to video", AssFile::COMMIT_DIAG_TIME);
+}
+
+void SubtitleGridModel::makeTimesContinuous(bool changeStart) {
+    const auto selected = sortedSelectedRows();
+    if (!file_ || selected.size() < 2)
+        return;
+    // As in wx, adjoin only a contiguous selection.
+    if (selected.last() - selected.first() + 1 != selected.size())
+        return;
+
+    bool changed = false;
+    for (int row = selected.first() + 1; row <= selected.last(); ++row) {
+        auto *previous = dialogueAt(row - 1);
+        auto *current = dialogueAt(row);
+        auto &target = changeStart ? current->Start : previous->End;
+        const auto source = changeStart ? previous->End : current->Start;
+        if (target != source) {
+            target = source;
+            changed = true;
+        }
+    }
+    if (changed)
+        aegisub_qt::commit(file_, "Make times continuous", AssFile::COMMIT_DIAG_TIME);
+}
+
+void SubtitleGridModel::sortAllLines(int field) {
+    if (!file_ || lineCount() < 2)
+        return;
+
+    AssFile::CompFunc compare;
+    switch (field) {
+        case SortStart: compare = AssFile::CompStart; break;
+        case SortEnd: compare = AssFile::CompEnd; break;
+        case SortStyle: compare = AssFile::CompStyle; break;
+        case SortActor: compare = AssFile::CompActor; break;
+        case SortEffect: compare = AssFile::CompEffect; break;
+        case SortLayer: compare = AssFile::CompLayer; break;
+        case SortText: compare = AssFile::CompText; break;
+        case SortStrippedText: compare = AssFile::CompTextStripped; break;
+        default: return;
+    }
+    if (std::is_sorted(rows_.begin(), rows_.end(), [compare](auto *left, auto *right) {
+            return compare(*left, *right);
+        }))
+        return;
+
+    file_->Sort(compare);
+    aegisub_qt::commit(file_, "Sort lines", AssFile::COMMIT_ORDER);
+}
+
+void SubtitleGridModel::moveSelectedRows(int delta) {
+    if (!file_ || delta == 0)
+        return;
+
+    bool moved = false;
+    auto order = rows_;
+    const auto selected = selectedDialogues();
+    const int step = delta < 0 ? 1 : -1;
+    for (int row = delta < 0 ? 1 : lineCount() - 2;
+         row >= 0 && row < lineCount(); row += step) {
+        auto *line = order[size_t(row)];
+        auto *neighbor = order[size_t(row - step)];
+        if (selected.contains(line) && !selected.contains(neighbor)) {
+            line->swap_nodes(*neighbor);
+            std::swap(order[size_t(row)], order[size_t(row - step)]);
+            moved = true;
+        }
+    }
+    if (moved)
+        aegisub_qt::commit(file_, "Move lines", AssFile::COMMIT_ORDER);
 }

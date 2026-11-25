@@ -322,6 +322,13 @@ void VideoViewModel::seekToActiveLine() {
     seekFrame(bridge_->FrameAtTimeStart(start_ms));
 }
 
+void VideoViewModel::seekToActiveLineEnd() {
+    if (!hasVideo() || !grid_model_)
+        return;
+    if (const auto *line = grid_model_->getActiveDialogue())
+        seekFrame(bridge_->FrameAtTimeEnd(line->End));
+}
+
 void VideoViewModel::togglePlay() {
     if (!hasVideo())
         return;
