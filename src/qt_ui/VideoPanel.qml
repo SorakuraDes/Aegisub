@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -13,8 +15,12 @@ Item {
     }
 
     component VideoTool: CompactIconButton {
-        implicitWidth: 32
-        implicitHeight: themeVM.controlHeight
+        implicitWidth: 28
+        implicitHeight: 28
+        onActiveFocusChanged: {
+            if (activeFocus)
+                toolViewport.revealTool(toolColumn.y + y, height)
+        }
     }
 
     ColumnLayout {
@@ -27,49 +33,105 @@ Item {
             spacing: 0
 
             Rectangle {
+                Layout.minimumWidth: 36
                 Layout.preferredWidth: 36
+                Layout.maximumWidth: 36
                 Layout.fillHeight: true
                 visible: videoVM.hasVideo
                 color: themeVM.surfaceContainer
 
-                Column {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: 3
-                    spacing: 2
-                    ButtonGroup { id: toolGroup }
-                    VideoTool {
-                        text: i18n.t("Standard tool")
-                        icon.source: "qrc:/icons/near_me.svg"
-                        objectName: "visualStandardButton"
-                        checkable: true
-                        ButtonGroup.group: toolGroup
-                        checked: visualToolsVM.activeTool === 0
-                        onClicked: visualToolsVM.activeTool = 0
+                Flickable {
+                    id: toolViewport
+                    anchors.fill: parent
+                    clip: true
+                    contentWidth: width
+                    contentHeight: toolColumn.implicitHeight + 6
+                    flickableDirection: Flickable.VerticalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    interactive: contentHeight > height
+
+                    function revealTool(top, toolHeight) {
+                        if (!interactive)
+                            return
+                        if (top < contentY)
+                            contentY = top
+                        else if (top + toolHeight > contentY + height)
+                            contentY = top + toolHeight - height
                     }
-                    VideoTool {
-                        text: i18n.t("Move subtitles")
-                        icon.source: "qrc:/icons/open_with.svg"
-                        objectName: "visualPositionButton"
-                        checkable: true
-                        ButtonGroup.group: toolGroup
-                        checked: visualToolsVM.activeTool === 1
-                        onClicked: visualToolsVM.activeTool = 1
+
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        width: 4
+                        padding: 0
                     }
-                    VideoTool {
-                        text: i18n.t("Rectangular clip")
-                        icon.source: "qrc:/icons/crop.svg"
-                        objectName: "visualClipButton"
-                        checkable: true
-                        ButtonGroup.group: toolGroup
-                        checked: visualToolsVM.activeTool === 2
-                        onClicked: visualToolsVM.activeTool = 2
-                    }
-                    VideoTool {
-                        text: i18n.t("Clear rectangular clip")
-                        icon.source: "qrc:/icons/close.svg"
-                        objectName: "visualClearClipButton"
-                        visible: visualToolsVM.activeTool === 2 && visualToolsVM.hasRectClip
-                        onClicked: visualToolsVM.clearRectClip()
+
+                    Column {
+                        id: toolColumn
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: 3
+                        spacing: 2
+                        ButtonGroup { id: toolGroup }
+                        VideoTool {
+                            text: i18n.t("Standard tool")
+                            icon.source: "qrc:/icons/near_me.svg"
+                            objectName: "visualStandardButton"
+                            checkable: true
+                            ButtonGroup.group: toolGroup
+                            checked: visualToolsVM.activeTool === 0
+                            onClicked: visualToolsVM.activeTool = 0
+                        }
+                        VideoTool {
+                            text: i18n.t("Move subtitles")
+                            icon.source: "qrc:/icons/open_with.svg"
+                            objectName: "visualPositionButton"
+                            checkable: true
+                            ButtonGroup.group: toolGroup
+                            checked: visualToolsVM.activeTool === 1
+                            onClicked: visualToolsVM.activeTool = 1
+                        }
+                        VideoTool {
+                            text: i18n.t("Animate subtitle position")
+                            icon.source: "qrc:/icons/trending_flat.svg"
+                            objectName: "visualMoveButton"
+                            checkable: true
+                            ButtonGroup.group: toolGroup
+                            checked: visualToolsVM.activeTool === 2
+                            onClicked: visualToolsVM.activeTool = 2
+                        }
+                        VideoTool {
+                            text: i18n.t("Rotate subtitles around Z axis")
+                            icon.source: "qrc:/icons/rotate_right.svg"
+                            objectName: "visualRotateZButton"
+                            checkable: true
+                            ButtonGroup.group: toolGroup
+                            checked: visualToolsVM.activeTool === 3
+                            onClicked: visualToolsVM.activeTool = 3
+                        }
+                        VideoTool {
+                            text: i18n.t("Scale subtitles")
+                            icon.source: "qrc:/icons/aspect_ratio.svg"
+                            objectName: "visualScaleButton"
+                            checkable: true
+                            ButtonGroup.group: toolGroup
+                            checked: visualToolsVM.activeTool === 4
+                            onClicked: visualToolsVM.activeTool = 4
+                        }
+                        VideoTool {
+                            text: i18n.t("Rectangular clip")
+                            icon.source: "qrc:/icons/crop.svg"
+                            objectName: "visualClipButton"
+                            checkable: true
+                            ButtonGroup.group: toolGroup
+                            checked: visualToolsVM.activeTool === 5
+                            onClicked: visualToolsVM.activeTool = 5
+                        }
+                        VideoTool {
+                            text: i18n.t("Clear rectangular clip")
+                            icon.source: "qrc:/icons/close.svg"
+                            objectName: "visualClearClipButton"
+                            visible: visualToolsVM.activeTool === 5 && visualToolsVM.hasRectClip
+                            onClicked: visualToolsVM.clearRectClip()
+                        }
                     }
                 }
             }
@@ -85,6 +147,8 @@ Item {
                     anchors.fill: parent
                     viewport: videoSurface
                     viewModel: visualToolsVM
+                    accentColor: themeVM.primary
+                    highlightColor: themeVM.secondary
                 }
 
                 Label {

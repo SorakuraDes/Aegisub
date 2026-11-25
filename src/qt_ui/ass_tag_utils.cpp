@@ -71,7 +71,8 @@ void scanTags(std::string_view text, Visit visit) {
 }
 
 template<class T>
-bool parseNumber(std::string_view arg, T& value, bool consumeAll = true) {
+bool parseNumber(std::string_view arg, T& value, bool consumeAll = true, size_t* consumed = nullptr) {
+    const auto original = arg;
     arg = trim(arg);
     if (!arg.empty() && arg.front() == '+') {
         arg.remove_prefix(1);
@@ -81,8 +82,11 @@ bool parseNumber(std::string_view arg, T& value, bool consumeAll = true) {
     const auto end = arg.data() + arg.size();
     const auto result = std::from_chars(arg.data(), end, value);
     if (result.ec != std::errc{} || (consumeAll && result.ptr != end)) return false;
-    if constexpr (std::is_floating_point_v<T>) return std::isfinite(value);
-    else return true;
+    if constexpr (std::is_floating_point_v<T>) {
+        if (!std::isfinite(value)) return false;
+    }
+    if (consumed) *consumed = result.ptr - original.data();
+    return true;
 }
 
 template<class T, size_t N>
@@ -95,6 +99,45 @@ bool parseArgs(const Tag& tag, std::array<T, N>& values) {
         if (!parseNumber(args.substr(0, comma), values[i])) return false;
         if (comma != args.npos) args.remove_prefix(comma + 1);
     }
+    return true;
+}
+
+struct MoveArgs {
+    std::array<double, 4> points;
+    int t1 = 0, t2 = 0;
+    std::string_view timing;
+};
+
+bool readMoveArgs(const Tag& tag, MoveArgs& move) {
+    if (tag.name != "move" || !tag.parenthesized) return false;
+    MoveArgs candidate;
+    auto args = tag.args;
+    for (size_t i = 0; i < candidate.points.size(); ++i) {
+        const auto comma = args.find(',');
+        if (!parseNumber(args.substr(0, comma), candidate.points[i])) return false;
+        if (comma == args.npos) {
+            if (i + 1 != candidate.points.size()) return false;
+            move = candidate;
+            return true;
+        }
+        if (i + 1 == candidate.points.size()) candidate.timing = args.substr(comma);
+        args.remove_prefix(comma + 1);
+    }
+    const auto comma = args.find(',');
+    if (comma == args.npos || !parseNumber(args.substr(0, comma), candidate.t1) ||
+        !parseNumber(args.substr(comma + 1), candidate.t2)) return false;
+    move = candidate;
+    return true;
+}
+
+bool rotationZTag(const Tag& tag) {
+    return tag.name == "frz" || tag.name == "fr";
+}
+
+bool readScalar(const Tag& tag, double& value, size_t* consumed = nullptr) {
+    double candidate;
+    if (tag.parenthesized || !parseNumber(tag.args, candidate, false, consumed)) return false;
+    value = candidate;
     return true;
 }
 
@@ -163,6 +206,16 @@ std::string formatCoord(double value) {
     return text == "-0" ? "0" : text;
 }
 
+Tag scalarEditRange(Tag tag) {
+    if (tag.parenthesized) return tag;
+    double value;
+    size_t consumed = 0;
+    readScalar(tag, value, &consumed);
+    // Bare scalar tags may be followed by override-block comments or spaces.
+    tag.end = tag.end - tag.args.size() + consumed;
+    return tag;
+}
+
 std::vector<Edit> rectEdits(std::string_view text, bool* hasVector = nullptr) {
     std::vector<Edit> edits;
     scanTags(text, [&](const Tag& tag) {
@@ -188,11 +241,12 @@ bool parsePos(std::string_view text, double* x, double* y, bool* explicitPos) {
                 hasPos = true;
             }
         }
-        else if (!hasMove && tag.name == "move") {
-            std::array<double, 4> move;
-            std::array<double, 6> timed;
-            if (parseArgs(tag, move)) { pos = {move[0], move[1]}; hasMove = true; }
-            else if (parseArgs(tag, timed)) { pos = {timed[0], timed[1]}; hasMove = true; }
+        else if (!hasMove) {
+            MoveArgs move;
+            if (readMoveArgs(tag, move)) {
+                pos = {move.points[0], move.points[1]};
+                hasMove = true;
+            }
         }
     });
     if (explicitPos) *explicitPos = hasPos;
@@ -200,6 +254,60 @@ bool parsePos(std::string_view text, double* x, double* y, bool* explicitPos) {
     if (x) *x = pos[0];
     if (y) *y = pos[1];
     return true;
+}
+
+bool parseMove(std::string_view text, double* x1, double* y1, double* x2, double* y2,
+               int* t1, int* t2) {
+    MoveArgs move;
+    bool found = false;
+    scanTags(text, [&](const Tag& tag) {
+        if (!found) found = readMoveArgs(tag, move);
+    });
+    if (!found) return false;
+    if (x1) *x1 = move.points[0];
+    if (y1) *y1 = move.points[1];
+    if (x2) *x2 = move.points[2];
+    if (y2) *y2 = move.points[3];
+    if (t1) *t1 = move.t1;
+    if (t2) *t2 = move.t2;
+    return true;
+}
+
+bool parseOrg(std::string_view text, double* x, double* y) {
+    bool found = false;
+    scanTags(text, [&](const Tag& tag) {
+        std::array<double, 2> org;
+        if (found || tag.name != "org" || !parseArgs(tag, org)) return;
+        if (x) *x = org[0];
+        if (y) *y = org[1];
+        found = true;
+    });
+    return found;
+}
+
+bool parseRotationZ(std::string_view text, const AssStyle* style, double* angleDeg) {
+    double angle = style ? style->angle : 0.0;
+    bool hasFrz = false, hasFr = false;
+    scanTags(text, [&](const Tag& tag) {
+        if (hasFrz) return;
+        if (tag.name == "frz") hasFrz = readScalar(tag, angle);
+        else if (tag.name == "fr" && !hasFr) hasFr = readScalar(tag, angle);
+    });
+    if (angleDeg) *angleDeg = angle;
+    return hasFrz || hasFr || style;
+}
+
+bool parseScale(std::string_view text, const AssStyle* style, double* x, double* y) {
+    double scaleX = style ? style->scalex : 100.0;
+    double scaleY = style ? style->scaley : 100.0;
+    bool hasX = false, hasY = false;
+    scanTags(text, [&](const Tag& tag) {
+        if (tag.name == "fscx" && !hasX) hasX = readScalar(tag, scaleX);
+        else if (tag.name == "fscy" && !hasY) hasY = readScalar(tag, scaleY);
+    });
+    if (x) *x = scaleX;
+    if (y) *y = scaleY;
+    return hasX || hasY || style;
 }
 
 bool parseRectClip(std::string_view text, int* x1, int* y1, int* x2, int* y2) {
@@ -231,6 +339,66 @@ std::string setPosTag(std::string_view text, double x, double y) {
         }
     }
     return insertLeadingTag(applyEdits(text, edits), position);
+}
+
+std::string setMoveTag(std::string_view text, double x1, double y1, double x2, double y2) {
+    if (!std::isfinite(x1) || !std::isfinite(y1) || !std::isfinite(x2) || !std::isfinite(y2))
+        return std::string(text);
+    std::vector<Edit> edits;
+    auto firstPos = text.npos, firstMove = text.npos;
+    MoveArgs move;
+    scanTags(text, [&](const Tag& tag) {
+        if (!tag.parenthesized || (tag.name != "pos" && tag.name != "move")) return;
+        if (tag.name == "pos" && firstPos == text.npos) firstPos = edits.size();
+        if (firstMove == text.npos && readMoveArgs(tag, move)) firstMove = edits.size();
+        edits.push_back({tag, {}});
+    });
+    auto replacement = "\\move(" + formatCoord(x1) + ',' + formatCoord(y1) + ',' +
+                       formatCoord(x2) + ',' + formatCoord(y2);
+    replacement += move.timing;
+    replacement += ')';
+    const auto index = firstMove != text.npos ? firstMove : firstPos;
+    if (index == text.npos) {
+        if (edits.empty()) return insertLeadingTag(std::string(text), replacement);
+        edits.front().replacement = std::move(replacement);
+    }
+    else edits[index].replacement = std::move(replacement);
+    return applyEdits(text, edits);
+}
+
+std::string setRotationZTag(std::string_view text, double angleDeg) {
+    if (!std::isfinite(angleDeg)) return std::string(text);
+    angleDeg = std::fmod(angleDeg, 360.0);
+    if (angleDeg > 180.0) angleDeg -= 360.0;
+    else if (angleDeg < -180.0) angleDeg += 360.0;
+    const auto replacement = "\\frz" + formatCoord(angleDeg);
+    std::vector<Edit> edits;
+    scanTags(text, [&](const Tag& tag) {
+        if (rotationZTag(tag)) edits.push_back({scalarEditRange(tag), edits.empty() ? replacement : std::string{}});
+    });
+    if (edits.empty()) return insertLeadingTag(std::string(text), replacement);
+    return applyEdits(text, edits);
+}
+
+std::string setScaleTags(std::string_view text, double x, double y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return std::string(text);
+    const auto xTag = "\\fscx" + formatCoord(x < 1.0 ? 1.0 : x);
+    const auto yTag = "\\fscy" + formatCoord(y < 1.0 ? 1.0 : y);
+    std::vector<Edit> edits;
+    bool hasX = false, hasY = false;
+    scanTags(text, [&](const Tag& tag) {
+        if (tag.name == "fscx") {
+            edits.push_back({scalarEditRange(tag), hasX ? std::string{} : xTag});
+            hasX = true;
+        }
+        else if (tag.name == "fscy") {
+            edits.push_back({scalarEditRange(tag), hasY ? std::string{} : yTag});
+            hasY = true;
+        }
+    });
+    auto result = applyEdits(text, edits);
+    if (hasX && hasY) return result;
+    return insertLeadingTag(std::move(result), (hasX ? std::string{} : xTag) + (hasY ? std::string{} : yTag));
 }
 
 std::string setRectClipTag(std::string_view text, int x1, int y1, int x2, int y2) {

@@ -4,6 +4,17 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 14：视频视觉工具进阶（M3 路线 B）
+
+基线 `feature@4e9e36abb`，本阶段未提交。Qt 视频栏工具依次为 Std / Pos / Move / RotZ / Scale / Clip。36 px 工具栏复用 28 px 紧凑按钮和 18 px SVG；空间不足时纵向滚动，键盘聚焦时自动露出目标按钮。三个新增图标均为 [Google 官方 Material Symbols Outlined](https://github.com/google/material-design-icons/tree/10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7/symbols/web)，来源与 Apache-2.0 许可见[图标说明](../src/qt_ui/icons/README.md)。
+
+- [ASS 标签工具](../src/qt_ui/ass_tag_utils.cpp)按原文区间编辑顶层覆写标签，保留中文、非目标标签及 `\t(...)` 内容。Move 把 `\pos` 原位转换为 `\move`（已有 Move 时保留其六参数时间窗口），清除冲突的定位标签；RotZ 支持 `\fr`、`\frz`、样式默认角和 `\org`；Scale 分轴回退到样式，并在写入时钳到至少 1%。新标签数值最多保留一位小数，旋转写入归一到 ±180°。
+- [视觉工具 ViewModel](../src/qt_ui/viewmodels/visual_tools_vm.cpp)沿用 Stage 12 的提交链：行选择、文档重载、提交和撤销同步状态；拖动期间 `COMMIT_DIAG_TEXT` 即时更新 EditBox、网格，libass 按 16 ms 合并刷新，松手补画末态。同一手势复用合并 ID，一次 Ctrl+Z 恢复拖动前文本。
+- [视频覆盖层](../src/qt_ui/visual_overlay_item.cpp)与预览共用视频实际绘制区域和脚本坐标映射。Move 有起终点和虚线箭头，未设路径时先显示向画面内偏移的终点，Shift 锁主轴；RotZ 以 `\org`（若有）或字幕锚点为中心，按 `atan2(-dy, dx)` 取逆时针正角，Shift 吸附到 15°；Scale 的右、下、右下手柄分别控制 X、Y、等比缩放，Shift 也可保持初始比例。
+- 构建：Qt 应用目标及 wx + Qt 全量双轨均退出 0；更新后的 ASS 标签单测已显式重建。Meson 的 `qt-ass-tag-utils`、`qt-ass-highlighter`、`qt-audio-spectrum` **3/3 通过**（`EXIT 0`）。受限模式首次构建命中既有 zlib 读取限制，使用正常完整文件权限构建通过，未更改文件权限。
+
+- Windows UI Automation + 截图均通过：[深浅主题总日志](../.build-tools/stage14/20261125-091739-10948/acceptance.log)、[Move 终点补测](../.build-tools/stage14/20261125-091938-11952/acceptance.log)。Move 起终点均实测按住时更新 EditBox、网格和 libass；拖终点在暂停的路径中段验证，不改起点且不遗留 `\pos`。逆时针拖动产生 `\frz59.5`，黄色 libass 字幕图形的屏幕主轴约 −61.2°（屏幕 Y 向下），覆盖层射线同向。X 杆将 93×13 px 画宽放大到 165×13 px，角手柄等比放大到 151×21 px。每次拖动一次 Ctrl+Z 即恢复原文和干净标题。深浅主题六个工具 SVG、143 px 高视频区滚动、Pos/Clip 实时刷新及撤销均通过。所有验收实例 `APP_EXIT=0`，stderr 仅正常加载记录。截图及复测脚本仅在 `.build-tools/stage14/`。
+
 ## Stage 13：动态主题、图标、ASS 高亮与频谱
 
 本阶段基线 `feature@9c6654f40`。接口及验收约定：

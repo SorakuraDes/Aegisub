@@ -57,8 +57,57 @@ int main() {
           "fall back to the first point of a move");
     check(setRectClipTag("text", 1, 2, 3, 4) == R"({\clip(1,2,3,4)}text)", "add rectangle to an unclipped line");
 
+    double mx1 = 99, my1 = 99, mx2 = 99, my2 = 99;
+    int t1 = 99, t2 = 99;
+    check(!parseMove(R"({\t(\move(1,2,3,4))\move(1,2,3,4,5)\move(1,2,3,4,0,2147483648)})",
+                     &mx1, &my1, &mx2, &my2, &t1, &t2) && mx1 == 99 && my2 == 99 && t1 == 99 && t2 == 99,
+          "ignore nested and malformed moves without changing outputs");
+    check(parseMove(R"({\move(-1,2.5,+3,4)})", &mx1, &my1, &mx2, &my2, &t1, &t2)
+          && mx1 == -1 && my1 == 2.5 && mx2 == 3 && my2 == 4 && t1 == 0 && t2 == 0,
+          "four-argument move has no explicit timing");
+    check(parseMove(R"({\move(1,2,3,4, +010 , 800)\move(9,8,7,6)})", &mx1, nullptr, nullptr, nullptr, &t1, &t2)
+          && mx1 == 1 && t1 == 10 && t2 == 800, "parse the first timed move with optional outputs");
+    // Universal escapes keep the fixture independent of the source code page.
+    const std::string chinese = "\u4e2d\u6587";
+    check(setMoveTag(chinese + R"({\i1\pos(6,7)\t(\pos(2,3)\move(4,5,6,7))}x{\pos(8,9)\b1})",
+                     1, -2.26, 3.44, 4) == chinese + R"({\i1\move(1,-2.3,3.4,4)\t(\pos(2,3)\move(4,5,6,7))}x{\b1})",
+          "convert a mid-line position in place and remove only top-level competitors");
+    check(setMoveTag(R"({\pos(1,2)\b1\move(3,4,5,6, +000 , 0 )}{\move(7,8,9,10)})" + chinese,
+                     12, 13, 14, 15) == R"({\b1\move(12,13,14,15, +000 , 0 )})" + chinese,
+          "replace an existing move in place and retain its timing spelling, including zero times");
+    check(setMoveTag(chinese, 1, 2, 3, 4) == R"({\move(1,2,3,4)})" + chinese, "insert an untimed move");
+
     AssDialogue line;
     AssStyle style;
+    style.angle = 29.5;
+    style.scalex = 106;
+    style.scaley = 94.5;
+    double angle = 0;
+    check(parseRotationZ(R"({\frx40\fry20\t(\frz10)\frz nan})", &style, &angle) && angle == 29.5,
+          "rotation falls back to style, ignoring invalid and non-Z rotations");
+    check(parseRotationZ(R"({\fr-40.25\fry10})", &style, &angle) && angle == -40.25,
+          "parse legacy fr rotation");
+    check(parseRotationZ(R"({\fr-40.25\frz +90\frz100})", nullptr, &angle) && angle == 90,
+          "first valid frz takes precedence over fr");
+    check(!parseRotationZ(chinese, nullptr, &angle) && angle == 0, "default rotation is zero without a style");
+    check(parseOrg(R"({\org(4)\t(\org(1,2))\org(+2.25,-5)\org(8,9)})", &x, &y)
+          && x == 2.25 && y == -5, "parse the first valid top-level origin");
+    check(!parseOrg(R"({\t(\org(1,2))})", &x, &y) && x == 2.25 && y == -5, "no default origin");
+    const auto rotated = setRotationZTag(R"({\frx10\fr20 )" + chinese + R"(\fry30\t(\fr12\frz9)}{\frz0}text)", 540.25);
+    check(rotated == R"({\frx10\frz-179.8 )" + chinese + R"(\fry30\t(\fr12\frz9)}text)",
+          "normalize rotation and preserve other rotations, nested transforms and block comments");
+    check(setRotationZTag(chinese, -720.0) == R"({\frz0})" + chinese, "insert rotation without negative zero");
+    check(setRotationZTag(chinese, -180) == R"({\frz-180})" + chinese &&
+          setRotationZTag(chinese, 180) == R"({\frz180})" + chinese, "keep both closed interval endpoints");
+    check(parseScale(R"({\t(\fscy2)\fscy inf\fscx +112.25})", &style, &x, &y)
+          && x == 112.25 && y == 94.5, "use override and style fallback independently for each scale axis");
+    check(parseScale(chinese, &style, &x, &y) && x == 106 && y == 94.5, "use both style scale defaults");
+    check(!parseScale(chinese, nullptr, &x, &y) && x == 100 && y == 100, "use ASS default scale without a style");
+    check(setScaleTags(R"({\i1\fscy122\t(\fscx40\fscy50)\fscx98}{\fscx99}text)" + chinese, 0.5, 113.26)
+          == R"({\i1\fscy113.3\t(\fscx40\fscy50)\fscx1}text)" + chinese,
+          "clamp and replace scale tags without touching transforms");
+    check(setScaleTags(R"({\fscy102})" + chinese, -2, 93.5) == R"({\fscx1\fscy93.5})" + chinese,
+          "insert missing scale axis");
     line.Margin = {0, 5, 0};
     style.Margin = {11, 22, 33};
     style.alignment = 9;

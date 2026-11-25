@@ -9,6 +9,7 @@
 #include "video_vm.h"
 
 #include <QScopedValueRollback>
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -55,17 +56,33 @@ void VisualToolsViewModel::refresh() {
     clip_x1_ = clip_y1_ = 0;
     clip_x2_ = play_res_x_;
     clip_y2_ = play_res_y_;
-    has_explicit_pos_ = has_rect_clip_ = false;
+    has_explicit_pos_ = has_rect_clip_ = has_explicit_move_ = has_explicit_org_ = false;
+    rot_z_ = 0;
+    scale_x_ = scale_y_ = 100;
     if (line) {
-        if (!aegisub_qt::parsePos(line->Text.get(), &pos_x_, &pos_y_, &has_explicit_pos_)) {
-            const auto *style = file_->GetStyle(line->Style);
-            if (!style)
-                style = file_->GetStyle("Default");
+        const auto *style = file_->GetStyle(line->Style);
+        if (!style)
+            style = file_->GetStyle("Default");
+        const auto &text = line->Text.get();
+        if (!aegisub_qt::parsePos(text, &pos_x_, &pos_y_, &has_explicit_pos_)) {
             const auto [x, y] = aegisub_qt::defaultAnchorPos(*line, style, play_res_x_, play_res_y_);
             pos_x_ = x;
             pos_y_ = y;
         }
-        has_rect_clip_ = aegisub_qt::parseRectClip(line->Text.get(), &clip_x1_, &clip_y1_, &clip_x2_, &clip_y2_);
+        aegisub_qt::parseRotationZ(text, style, &rot_z_);
+        aegisub_qt::parseScale(text, style, &scale_x_, &scale_y_);
+        has_rect_clip_ = aegisub_qt::parseRectClip(text, &clip_x1_, &clip_y1_, &clip_x2_, &clip_y2_);
+    }
+
+    move_x1_ = org_x_ = pos_x_;
+    move_y1_ = move_y2_ = org_y_ = pos_y_;
+    // Preview inward near the right edge so both handles remain usable.
+    const double previewOffset = std::min(80.0, play_res_x_ / 2.0);
+    move_x2_ = pos_x_ + (pos_x_ + previewOffset <= play_res_x_ ? previewOffset : -previewOffset);
+    if (line) {
+        const auto &text = line->Text.get();
+        has_explicit_move_ = aegisub_qt::parseMove(text, &move_x1_, &move_y1_, &move_x2_, &move_y2_);
+        has_explicit_org_ = aegisub_qt::parseOrg(text, &org_x_, &org_y_);
     }
     emit visualStateChanged();
 }
@@ -98,6 +115,28 @@ void VisualToolsViewModel::updatePos(double sx, double sy) {
     if (dragging_ && active_tool_ == DragPos && std::isfinite(sx) && std::isfinite(sy)) {
         if (auto *line = activeLine())
             commitText(line, aegisub_qt::setPosTag(line->Text.get(), sx, sy), "position subtitle", true);
+    }
+}
+
+void VisualToolsViewModel::updateMove(double x1, double y1, double x2, double y2) {
+    if (dragging_ && active_tool_ == Move && std::isfinite(x1) && std::isfinite(y1)
+        && std::isfinite(x2) && std::isfinite(y2)) {
+        if (auto *line = activeLine())
+            commitText(line, aegisub_qt::setMoveTag(line->Text.get(), x1, y1, x2, y2), "move subtitle", true);
+    }
+}
+
+void VisualToolsViewModel::updateRotationZ(double angleDeg) {
+    if (dragging_ && active_tool_ == RotateZ && std::isfinite(angleDeg)) {
+        if (auto *line = activeLine())
+            commitText(line, aegisub_qt::setRotationZTag(line->Text.get(), angleDeg), "rotate subtitle", true);
+    }
+}
+
+void VisualToolsViewModel::updateScale(double sx, double sy) {
+    if (dragging_ && active_tool_ == Scale && std::isfinite(sx) && std::isfinite(sy)) {
+        if (auto *line = activeLine())
+            commitText(line, aegisub_qt::setScaleTags(line->Text.get(), sx, sy), "scale subtitle", true);
     }
 }
 

@@ -16,6 +16,7 @@
     <file>VideoPanel.qml</file>
     <file>AudioPanel.qml</file>
     <file>icons/add.svg</file>
+    <file>icons/aspect_ratio.svg</file>
     <file>icons/close.svg</file>
     <file>icons/content_copy.svg</file>
     <file>icons/crop.svg</file>
@@ -31,11 +32,13 @@
     <file>icons/open_with.svg</file>
     <file>icons/pause.svg</file>
     <file>icons/play_arrow.svg</file>
+    <file>icons/rotate_right.svg</file>
     <file>icons/search.svg</file>
     <file>icons/settings.svg</file>
     <file>icons/skip_next.svg</file>
     <file>icons/skip_previous.svg</file>
     <file>icons/stop.svg</file>
+    <file>icons/trending_flat.svg</file>
     <file>icons/zoom_in.svg</file>
     <file>icons/zoom_out.svg</file>
     <file>icons/LICENSE</file>
