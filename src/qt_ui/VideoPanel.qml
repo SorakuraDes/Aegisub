@@ -138,12 +138,16 @@ Item {
 
             VideoViewport {
                 id: videoSurface
+                objectName: "videoViewport"
+                zoomPercent: videoVM.zoomPercent
+                clip: true
                 Accessible.role: Accessible.Graphic
                 Accessible.name: i18n.t("Video preview")
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
                 VisualOverlay {
+                    objectName: "visualOverlay"
                     anchors.fill: parent
                     viewport: videoSurface
                     viewModel: visualToolsVM

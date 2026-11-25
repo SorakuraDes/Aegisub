@@ -6,6 +6,8 @@
 #include "subtitle_grid_model.h"
 #include "undo_manager.h"
 
+#include "../../options.h"
+#include "../aegisub_core.h"
 #include "audio_vm.h"
 
 #include "../commit_bridge.h"
@@ -68,6 +70,16 @@ AudioViewModel::AudioViewModel(AssFile *file, SubtitleGridModel *gridModel,
 , grid_model_(gridModel)
 , undo_manager_(undoManager)
 {
+    if (config::opt) {
+        follow_playhead_ = OPT_GET("Audio/Lock Scroll on Cursor")->GetBool();
+        snap_to_keyframes_ = OPT_GET("Audio/Snap/Enable")->GetBool();
+        follow_option_ = OPT_SUB("Audio/Lock Scroll on Cursor", [this] {
+            setFollowPlayhead(OPT_GET("Audio/Lock Scroll on Cursor")->GetBool());
+        });
+        snap_option_ = OPT_SUB("Audio/Snap/Enable", [this] {
+            setSnapToKeyframes(OPT_GET("Audio/Snap/Enable")->GetBool());
+        });
+    }
     playback_timer_.setTimerType(Qt::PreciseTimer);
     playback_timer_.setInterval(16);
     connect(&playback_timer_, &QTimer::timeout, this, &AudioViewModel::onPlaybackTick);
@@ -105,6 +117,11 @@ QString AudioViewModel::playerStatus() const {
 QString AudioViewModel::trackLabel() const { return track_label_; }
 
 void AudioViewModel::setFollowPlayhead(bool enabled) {
+    if (config::opt && OPT_GET("Audio/Lock Scroll on Cursor")->GetBool() != enabled) {
+        OPT_SET("Audio/Lock Scroll on Cursor")->SetBool(enabled);
+        aegisub_qt::FlushOptions();
+        return;
+    }
     if (follow_playhead_ == enabled)
         return;
     follow_playhead_ = enabled;
@@ -115,7 +132,20 @@ void AudioViewModel::setFollowPlayhead(bool enabled) {
 
 bool AudioViewModel::snapToKeyframes() const { return snap_to_keyframes_; }
 
+int AudioViewModel::snapDistancePx() const {
+    return config::opt ? int(std::clamp<int64_t>(OPT_GET("Audio/Snap/Distance")->GetInt(), 0, 25)) : 6;
+}
+
+bool AudioViewModel::wheelDefaultsToZoom() const {
+    return config::opt && OPT_GET("Audio/Wheel Default to Zoom")->GetBool();
+}
+
 void AudioViewModel::setSnapToKeyframes(bool enabled) {
+    if (config::opt && OPT_GET("Audio/Snap/Enable")->GetBool() != enabled) {
+        OPT_SET("Audio/Snap/Enable")->SetBool(enabled);
+        aegisub_qt::FlushOptions();
+        return;
+    }
     if (snap_to_keyframes_ == enabled)
         return;
     snap_to_keyframes_ = enabled;
@@ -181,13 +211,23 @@ bool AudioViewModel::openLocalPath(const QString &path) {
     return openLocalPathImpl(path, -1, false, false);
 }
 
-bool AudioViewModel::openLocalPathQuiet(const QString &path) {
-    // Never replace an explicitly opened audio file, and stay silent on failure:
-    // a video without an audio track is a perfectly normal case (the video view
-    // model calls this for every real video it opens).
-    if (hasAudio())
-        return false;
-    return openLocalPathImpl(path, -1, false, true);
+void AudioViewModel::updateAudioFromVideo(const QString &path, bool autoLoad) {
+    if (hasAudio()) {
+        if (!source_from_video_)
+            return;
+        // Reopening the same video (for example, switching video tracks) does
+        // not need to reload or discard the current audio selection.
+        if (!path.isEmpty() && QFileInfo(source_path_) == QFileInfo(path))
+            return;
+    }
+
+    if (autoLoad && !path.isEmpty() && openLocalPathImpl(path, -1, false, true, true))
+        return;
+
+    // A missing track is normal. Do not leave the previous video's audio
+    // playing against an unrelated picture, even if probing failed silently.
+    if (source_from_video_)
+        closeAudio();
 }
 
 bool AudioViewModel::openLocalPathWithTrack(const QString &path, int trackId) {
@@ -195,7 +235,8 @@ bool AudioViewModel::openLocalPathWithTrack(const QString &path, int trackId) {
         setError(QStringLiteral("No audio track selected"));
         return false;
     }
-    return openLocalPathImpl(path, trackId, false, false);
+    const bool fromVideo = pending_track_from_video_ && pending_track_path_ == path;
+    return openLocalPathImpl(path, trackId, false, false, fromVideo);
 }
 
 bool AudioViewModel::openAudioTrackPicker() {
@@ -207,6 +248,7 @@ bool AudioViewModel::openAudioTrackPicker() {
         aegisub_qt::ToNativePath(source_path_), &probe_error);
     if (tracks.size() > 1) {
         pending_track_path_ = source_path_;
+        pending_track_from_video_ = source_from_video_;
         emit trackSelectionRequired(pending_track_path_, QStringLiteral("audio"),
                                     tracksToVariantList(tracks));
         return true;
@@ -214,15 +256,16 @@ bool AudioViewModel::openAudioTrackPicker() {
 
     // Single-track (or unprobeable) file: just re-open it, no dialog.
     const int only_track = tracks.empty() ? -1 : tracks.front().id;
-    return openLocalPathImpl(source_path_, only_track, false, false);
+    return openLocalPathImpl(source_path_, only_track, false, false, source_from_video_);
 }
 
 void AudioViewModel::cancelPendingTrackSelection() {
     pending_track_path_.clear();
+    pending_track_from_video_ = false;
 }
 
 bool AudioViewModel::openLocalPathImpl(const QString &path, int trackId, bool interactive,
-                                       bool quiet) {
+                                       bool quiet, bool fromVideo) {
     if (path.isEmpty()) {
         if (!quiet)
             setError(QStringLiteral("No audio path given"));
@@ -257,35 +300,30 @@ bool AudioViewModel::openLocalPathImpl(const QString &path, int trackId, bool in
     if (chosen_track < 0) {
         if (interactive && tracks.size() > 1) {
             pending_track_path_ = info.absoluteFilePath();
+            pending_track_from_video_ = false;
             emit trackSelectionRequired(pending_track_path_, QStringLiteral("audio"),
                                         tracksToVariantList(tracks));
             return false;
         }
         chosen_track = tracks.front().id;
     }
-    pending_track_path_.clear();
-
+    cancelPendingTrackSelection();
     stopPlayback();
 
     std::string error;
     if (!bridge_.OpenFile(native_path, &error, chosen_track)) {
-        // AudioBridge::OpenFile() closes itself on failure.
-        if (quiet) {
+        // The provider has already discarded its previous source.
+        closeAudio();
+        if (quiet)
             LOG_D("qt/audio") << "automatic audio load skipped:" << error;
-            return false;
-        }
-        audio_name_.clear();
-        source_path_.clear();
-        track_label_.clear();
-        source_track_count_ = 0;
-        setError(QString::fromStdString(error));
-        emit audioChanged();
-        emit playerStatusChanged();
+        else
+            setError(QString::fromStdString(error));
         return false;
     }
 
     audio_name_ = info.fileName();
     source_path_ = info.absoluteFilePath();
+    source_from_video_ = fromVideo;
     source_track_count_ = int(tracks.size());
     track_label_ = tracks.size() > 1 ? describeTrack(tracks, chosen_track) : QString();
     view_start_ms_ = 0;
@@ -300,6 +338,7 @@ bool AudioViewModel::openLocalPathImpl(const QString &path, int trackId, bool in
     emit activeTimesChanged();
     emit viewChanged();
     emit playbackTimeChanged();
+    emit fileOpened(source_path_);
     return true;
 }
 
@@ -308,12 +347,15 @@ bool AudioViewModel::openDummyAudio() {
 
     std::string error;
     if (!bridge_.OpenDummy(10, &error)) {
+        closeAudio();
         setError(QString::fromStdString(error));
         return false;
     }
 
     audio_name_ = QStringLiteral("Dummy audio (10 s, 440 Hz sine)");
     source_path_.clear();
+    source_from_video_ = false;
+    cancelPendingTrackSelection();
     track_label_.clear();
     source_track_count_ = 0;
     view_start_ms_ = 0;
@@ -337,7 +379,8 @@ void AudioViewModel::closeAudio() {
     source_path_.clear();
     track_label_.clear();
     source_track_count_ = 0;
-    pending_track_path_.clear();
+    source_from_video_ = false;
+    cancelPendingTrackSelection();
     playback_time_ms_ = 0;
     view_start_ms_ = 0;
     zoom_px_per_sec_ = 100.0;

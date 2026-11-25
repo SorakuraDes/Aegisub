@@ -16,6 +16,8 @@
 #include "viewmodels/document_vm.h"
 #include "viewmodels/edit_box_vm.h"
 #include "viewmodels/preferences_vm.h"
+#include "viewmodels/mru_vm.h"
+#include "viewmodels/log_vm.h"
 #include "viewmodels/theme_vm.h"
 #include "ass_syntax_highlighter.h"
 #include "viewmodels/properties_vm.h"
@@ -198,6 +200,8 @@ private:
 #include <QTemporaryDir>
 #include <cstdio>
 int runStage15IntegrationTest(QQmlApplicationEngine &engine);
+int runStage15BIntegrationTest(QQmlApplicationEngine &engine);
+int runStage15BReloadTest(QQmlApplicationEngine &engine);
 #endif
 
 int main(int argc, char *argv[]) {
@@ -206,12 +210,19 @@ int main(int argc, char *argv[]) {
         std::fprintf(type == QtInfoMsg || type == QtDebugMsg ? stdout : stderr,
                      "%s\n", qPrintable(message));
     });
+    bool reloadTest = false;
+    for (int i = 1; i < argc; ++i)
+        reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
     QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
-    if (!testConfig.isValid()) {
-        qCritical() << testConfig.errorString();
+    if (!reloadTest) {
+        if (!testConfig.isValid()) {
+            qCritical() << testConfig.errorString();
+            return 1;
+        }
+        qputenv("AEGISUB_QT_CONFIG_DIR", QFileInfo(testConfig.path()).absoluteFilePath().toUtf8());
+    } else if (qEnvironmentVariableIsEmpty("AEGISUB_QT_CONFIG_DIR")) {
         return 1;
     }
-    qputenv("AEGISUB_QT_CONFIG_DIR", testConfig.path().toUtf8());
 #endif
     QGuiApplication app(argc, argv);
     app.setApplicationName("aegisub-qt");
@@ -252,6 +263,26 @@ int main(int argc, char *argv[]) {
     StylesViewModel stylesVM(&script, &undoManager);
     VideoViewModel videoVM(&script, &gridModel, &undoManager);
     AudioViewModel audioVM(&script, &gridModel, &undoManager);
+    MruViewModel mruVM;
+    LogViewModel logVM;
+    QObject::connect(&documentVM, &DocumentViewModel::fileOpened, &mruVM, &MruViewModel::recordSubtitle);
+    QObject::connect(&videoVM, &VideoViewModel::fileOpened, &mruVM, &MruViewModel::recordVideo);
+    QObject::connect(&audioVM, &AudioViewModel::fileOpened, &mruVM, &MruViewModel::recordAudio);
+    QObject::connect(&videoVM, &VideoViewModel::videoNameChanged, &documentVM, [&] {
+        documentVM.setLinkedVideoPath(videoVM.filePath());
+    });
+    QObject::connect(&audioVM, &AudioViewModel::audioChanged, &documentVM, [&] {
+        documentVM.setLinkedAudioPath(audioVM.filePath());
+    });
+    auto recordVideoUiState = [&] {
+        documentVM.setVideoUiState(videoVM.hasVideo() ? videoVM.zoomPercent() / 100. : 0.,
+                                   videoVM.hasVideo() ? videoVM.currentFrame() : 0);
+    };
+    QObject::connect(&videoVM, &VideoViewModel::currentFrameChanged, &documentVM, recordVideoUiState);
+    QObject::connect(&videoVM, &VideoViewModel::zoomPercentChanged, &documentVM, recordVideoUiState);
+    auto syncGridPreferences = [&] { gridModel.setHideOverridesChar(preferencesVM.hideOverridesChar()); };
+    syncGridPreferences();
+    QObject::connect(&preferencesVM, &PreferencesViewModel::optionsChanged, &gridModel, syncGridPreferences);
     // A/V synchronised playback: the video transport starts the audio player at
     // the current video position and then follows the audio clock.
     videoVM.setAudioViewModel(&audioVM);
@@ -292,10 +323,13 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<AssSyntaxHighlighter>("Aegisub", 1, 0, "AssSyntaxHighlighter");
 
     QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("nativeWindowRaise", QGuiApplication::platformName() != QStringLiteral("offscreen"));
     engine.rootContext()->setContextProperty("i18n", &i18n);
     engine.rootContext()->setContextProperty("appInfo", &appInfoVM);
     engine.rootContext()->setContextProperty("aboutVM", &aboutVM);
     engine.rootContext()->setContextProperty("preferencesVM", &preferencesVM);
+    engine.rootContext()->setContextProperty("mruVM", &mruVM);
+    engine.rootContext()->setContextProperty("logVM", &logVM);
     engine.rootContext()->setContextProperty("themeVM", &themeVM);
     engine.rootContext()->setContextProperty("propertiesVM", &propertiesVM);
     engine.rootContext()->setContextProperty("gridModel", &gridModel);
@@ -332,17 +366,23 @@ int main(int argc, char *argv[]) {
             startup_file = arg;
     }
 
-    if (!startup_file.isEmpty() && QFileInfo(startup_file).isFile()) {
-        if (!documentVM.openLocalPath(startup_file))
-            qWarning() << "Failed to open" << startup_file << ":" << documentVM.lastError();
-    } else {
-        if (!documentVM.newDocument())
-            qWarning() << "Failed to create a new document:" << documentVM.lastError();
-    }
+    const bool hasStartupSubtitle = !startup_file.isEmpty() && QFileInfo(startup_file).isFile();
+    if (!hasStartupSubtitle && !documentVM.newDocument())
+        qWarning() << "Failed to create a new document:" << documentVM.lastError();
 
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;
+
+    if (hasStartupSubtitle) {
+        auto *root = engine.rootObjects().first();
+        root->setProperty("skipLinkedVideo", QFileInfo(startup_video).isFile());
+        root->setProperty("skipLinkedAudio", QFileInfo(startup_audio).isFile());
+        if (!documentVM.openLocalPath(startup_file))
+            qWarning() << "Failed to open" << startup_file << ":" << documentVM.lastError();
+        root->setProperty("skipLinkedVideo", false);
+        root->setProperty("skipLinkedAudio", false);
+    }
 
     MainShortcutFilter mainShortcutFilter(engine.rootObjects().first());
     app.installEventFilter(&mainShortcutFilter);
@@ -388,7 +428,9 @@ int main(int argc, char *argv[]) {
     });
 
 #ifdef AEGISUB_STAGE15_TEST
-    return runStage15IntegrationTest(engine);
+    if (reloadTest) return runStage15BReloadTest(engine);
+    if (const int result = runStage15IntegrationTest(engine)) return result;
+    return runStage15BIntegrationTest(engine);
 #else
     return app.exec();
 #endif

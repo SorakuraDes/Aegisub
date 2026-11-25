@@ -1,5 +1,6 @@
 #pragma once
 
+#include <libaegisub/signal.h>
 #include <QColor>
 #include <QObject>
 #include <QVariantList>
@@ -71,4 +72,5 @@ private:
     QColor seed_{0x00, 0xbc, 0xd4};
     bool dark_ = true;
     QString settingsPath_;
+    agi::signal::Connection darkModeSubscription_;
 };

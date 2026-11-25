@@ -1,6 +1,9 @@
 #pragma once
 
+#include <libaegisub/signal.h>
+
 #include <QObject>
+#include <QTimer>
 #include <QString>
 #include <QUrl>
 
@@ -41,8 +44,16 @@ public:
     Q_INVOKABLE bool saveFileAs(const QUrl &url);
     Q_INVOKABLE bool saveLocalPath(const QString &path);
     Q_INVOKABLE void clearError();
+    void setLinkedVideoPath(const QString &path);
+    void setLinkedAudioPath(const QString &path);
+    void setVideoUiState(double zoom, int frame);
+    Q_INVOKABLE void setGridScrollPosition(int row);
+    Q_INVOKABLE int gridScrollPosition() const { return grid_scroll_position_; }
 
 signals:
+    void fileOpened(const QString &path);
+    void linkedMediaRequested(const QString &videoPath, const QString &audioPath, bool ask,
+                              int zoomPercent, int frame);
     void filePathChanged();
     void displayNameChanged();
     void dirtyChanged();
@@ -50,6 +61,7 @@ signals:
     void encodingChanged();
     /// A new document was created or one was opened: every index that caches
     /// file contents (styles, ...) must rebuild itself.
+    void documentAboutToReload();
     void documentReloaded();
 
 private:
@@ -59,6 +71,11 @@ private:
     void setEncoding(const QString &encoding);
     void setError(const QString &message);
     void clearErrorIfNeeded();
+    void updateAutosaveTimer();
+    void writeAutosave();
+    void backupOriginal(const QString &path);
+    void requestLinkedMedia(const QString &path);
+    void updateSaveProperties(AssFile &file, const QString &path);
 
     AssFile *file_;
     SubtitleGridModel *gridModel_;
@@ -66,4 +83,15 @@ private:
     QString file_path_;
     QString last_error_;
     QString encoding_ = QStringLiteral("UTF-8");
+    QTimer autosave_timer_;
+    QTimer save_change_timer_;
+    bool autosave_pending_ = false;
+    bool loading_document_ = false;
+    QString linked_video_path_;
+    QString linked_audio_path_;
+    double video_zoom_ = 0.;
+    int video_frame_ = 0;
+    int grid_scroll_position_ = 0;
+    agi::signal::Connection autosave_enabled_subscription_;
+    agi::signal::Connection autosave_interval_subscription_;
 };

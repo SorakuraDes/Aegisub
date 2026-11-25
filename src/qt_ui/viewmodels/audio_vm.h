@@ -33,6 +33,8 @@ class AudioViewModel final : public QObject {
     Q_PROPERTY(bool spectrumMode READ spectrumMode WRITE setSpectrumMode NOTIFY spectrumModeChanged)
     Q_PROPERTY(bool hasAudio READ hasAudio NOTIFY audioChanged)
     Q_PROPERTY(QString audioName READ audioName NOTIFY audioChanged)
+    Q_PROPERTY(QString filePath READ filePath NOTIFY audioChanged)
+    Q_PROPERTY(bool isAudioFromVideo READ isAudioFromVideo NOTIFY audioChanged)
     Q_PROPERTY(int durationMs READ durationMs NOTIFY audioChanged)
     Q_PROPERTY(int sampleRate READ sampleRate NOTIFY audioChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
@@ -67,6 +69,8 @@ public:
     void computeSpectrum(int64_t start, int64_t end, int width, std::vector<float> &levels) const;
     bool hasAudio() const;
     QString audioName() const;
+    QString filePath() const { return source_path_; }
+    bool isAudioFromVideo() const { return source_from_video_; }
     int durationMs() const;
     int sampleRate() const;
     bool isPlaying() const;
@@ -84,6 +88,8 @@ public:
     QString trackLabel() const;
     bool snapToKeyframes() const;
     void setSnapToKeyframes(bool enabled);
+    int snapDistancePx() const;
+    bool wheelDefaultsToZoom() const;
     int keyframeCount() const;
 
     /// Keyframe start times (ms, ascending) from the open video.
@@ -95,11 +101,9 @@ public:
 
     Q_INVOKABLE bool openAudio(const QUrl &url);
     Q_INVOKABLE bool openLocalPath(const QString &path);
-    /// Same as openLocalPath(), but for the video view model's automatic audio
-    /// track loading: an already-open audio file is left alone and failures stay
-    /// silent (no error banner) because videos without an audio track are a
-    /// perfectly normal case.
-    Q_INVOKABLE bool openLocalPathQuiet(const QString &path);
+    /// Follow a newly opened video without replacing explicitly opened audio.
+    /// An empty path clears stale automatic audio without trying to load any.
+    void updateAudioFromVideo(const QString &path, bool autoLoad);
     /// Open a specific ffms2 audio track id (from the Qt track picker).
     Q_INVOKABLE bool openLocalPathWithTrack(const QString &path, int trackId);
     /// Re-open the current file through the track picker ("Select Audio Track").
@@ -143,6 +147,7 @@ public:
 signals:
     void spectrumModeChanged();
     void audioChanged();
+    void fileOpened(const QString &path);
     /// "Play Line" (selection playback) started. The video view model listens to
     /// this so an independent line playback always wins over a video playback
     /// instead of the two transports fighting over the audio device.
@@ -163,7 +168,8 @@ signals:
                                 const QVariantList &tracks);
 
 private:
-    bool openLocalPathImpl(const QString &path, int trackId, bool interactive, bool quiet);
+    bool openLocalPathImpl(const QString &path, int trackId, bool interactive, bool quiet,
+                           bool fromVideo = false);
     void refreshActiveTimes();
     void setError(const QString &message);
     void resetError();
@@ -185,6 +191,8 @@ private:
     QString source_path_;
     QString track_label_;
     QString pending_track_path_;
+    bool source_from_video_ = false;
+    bool pending_track_from_video_ = false;
     int source_track_count_ = 0;
     std::vector<int> keyframe_times_ms_;
     bool spectrum_mode_ = false;
@@ -205,4 +213,6 @@ private:
 
     QTimer playback_timer_;
     agi::signal::Connection commit_connection_;
+    agi::signal::Connection follow_option_;
+    agi::signal::Connection snap_option_;
 };

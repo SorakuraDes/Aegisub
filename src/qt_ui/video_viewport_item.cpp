@@ -23,6 +23,15 @@ void VideoViewportItem::setFrame(const QImage &frame) {
 
 QRectF VideoViewportItem::contentRect() const { return content_rect_; }
 
+void VideoViewportItem::setZoomPercent(int percent) {
+    if (percent < 0 || zoom_percent_ == percent)
+        return;
+    zoom_percent_ = percent;
+    updateContentRect();
+    update();
+    emit zoomPercentChanged();
+}
+
 void VideoViewportItem::geometryChange(const QRectF &new_geometry, const QRectF &old_geometry) {
     QQuickPaintedItem::geometryChange(new_geometry, old_geometry);
     if (new_geometry.size() != old_geometry.size()) {
@@ -34,8 +43,10 @@ void VideoViewportItem::geometryChange(const QRectF &new_geometry, const QRectF 
 void VideoViewportItem::updateContentRect() {
     QRectF destination;
     if (!frame_.isNull() && width() > 0 && height() > 0) {
-        const QSizeF target = QSizeF(frame_.size()).scaled(QSizeF(width(), height()),
-                                                           Qt::KeepAspectRatio);
+        const QSizeF native(frame_.size());
+        const QSizeF target = zoom_percent_ == 0
+            ? native.scaled(QSizeF(width(), height()), Qt::KeepAspectRatio)
+            : native * (zoom_percent_ / 100.0);
         destination = QRectF((width() - target.width()) / 2.0,
                              (height() - target.height()) / 2.0,
                              target.width(), target.height());

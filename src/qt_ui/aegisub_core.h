@@ -16,4 +16,8 @@ bool FlushOptions(QString *error = nullptr);
 /// Absolute path of the config.json currently written to.
 QString OptionsFilePath();
 
+/// Read the current log only if the buffer has changed since revision.
+bool ReadRecentLog(quint64 &revision, QString &text);
+void ClearRecentLog();
+
 } // namespace aegisub_qt

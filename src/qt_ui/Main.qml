@@ -25,6 +25,11 @@ ApplicationWindow {
     property var stylesWindow: null
     property var shiftTimesWindow: null
     property var trackPickerWindow: null
+    property var logWindow: null
+    property int workspaceLayout: 3
+    readonly property bool showVideoPanel: videoVM.hasVideo && (workspaceLayout === 1 || workspaceLayout === 3)
+    readonly property bool showAudioPanel: audioVM.hasAudio && (workspaceLayout === 2 || workspaceLayout === 3)
+    property string recentSubtitle: ""
 
     // Pending File-menu action while the unsaved-changes dialog is up, and the
     // action to resume once a (possibly Save As) save finished.
@@ -40,7 +45,7 @@ ApplicationWindow {
             return aboutWindow
         if (kind === "preferences")
             return preferencesWindow
-        return propertiesWindow
+        return kind === "log" ? logWindow : propertiesWindow
     }
 
     function setWindow(kind, win) {
@@ -48,21 +53,28 @@ ApplicationWindow {
             aboutWindow = win
         else if (kind === "preferences")
             preferencesWindow = win
+        else if (kind === "log")
+            logWindow = win
         else
             propertiesWindow = win
+    }
+
+    function raiseAndActivate(win) {
+        if (nativeWindowRaise) win.raise()
+        win.requestActivate()
     }
 
     function openWindow(kind) {
         var existing = windowFor(kind)
         if (existing !== null) {
             existing.show()
-            existing.raise()
-            existing.requestActivate()
+            raiseAndActivate(existing)
             return
         }
 
         var url = "qrc:/" + (kind === "about" ? "AboutWindow.qml"
                             : kind === "preferences" ? "PreferencesWindow.qml"
+                            : kind === "log" ? "LogWindow.qml"
                             : "PropertiesWindow.qml")
         var component = Qt.createComponent(url)
         if (component.status !== Component.Ready) {
@@ -72,8 +84,7 @@ ApplicationWindow {
         var win = component.createObject(null)
         setWindow(kind, win)
         win.show()
-        win.raise()
-        win.requestActivate()
+        raiseAndActivate(win)
     }
 
     // Non-modal Find & Replace window; both menu entries reuse the same
@@ -88,8 +99,7 @@ ApplicationWindow {
             searchWindow = component.createObject(null)
         }
         searchWindow.show()
-        searchWindow.raise()
-        searchWindow.requestActivate()
+        raiseAndActivate(searchWindow)
         searchWindow.focusField(useReplace)
     }
 
@@ -103,8 +113,7 @@ ApplicationWindow {
             stylesWindow = component.createObject(null)
         }
         stylesWindow.show()
-        stylesWindow.raise()
-        stylesWindow.requestActivate()
+        raiseAndActivate(stylesWindow)
     }
 
     // Non-modal Shift Times window (one instance, reopened from Subtitle menu).
@@ -118,8 +127,7 @@ ApplicationWindow {
             shiftTimesWindow = component.createObject(null)
         }
         shiftTimesWindow.show()
-        shiftTimesWindow.raise()
-        shiftTimesWindow.requestActivate()
+        raiseAndActivate(shiftTimesWindow)
     }
 
     // Qt track picker for multi-track video/audio containers. The view models
@@ -151,8 +159,52 @@ ApplicationWindow {
         }
     }
 
+    property bool skipLinkedVideo: false
+    property bool skipLinkedAudio: false
+    function openLinkedMedia(videoPath, audioPath, zoomPercent, frame, skipVideo, skipAudio) {
+        if (!skipVideo) {
+            if (videoPath.length === 0) {
+                if (videoVM.hasVideo) videoVM.closeVideo()
+            } else if (videoPath === videoVM.filePath || videoVM.openLocalPath(videoPath)) {
+                videoVM.zoomPercent = zoomPercent
+                if (frame >= 0) videoVM.seekFrame(frame)
+            }
+        }
+        if (!skipAudio) {
+            if (audioPath.length === 0) {
+                if (audioVM.hasAudio) audioVM.closeAudio()
+            } else if (audioPath !== audioVM.filePath) {
+                audioVM.openLocalPath(audioPath)
+            }
+        }
+    }
+
+    Connections {
+        target: documentVM
+        function onLinkedMediaRequested(videoPath, audioPath, ask, zoomPercent, frame) {
+            const skipVideo = mainWindow.skipLinkedVideo
+            const skipAudio = mainWindow.skipLinkedAudio
+            const videoMatches = skipVideo || (videoPath === videoVM.filePath && (videoPath.length > 0 || !videoVM.hasVideo))
+            const audioMatches = skipAudio || (audioPath === audioVM.filePath && (audioPath.length > 0 || !audioVM.hasAudio))
+            if (ask && (!videoMatches || !audioMatches)) {
+                linkedMediaDialog.videoPath = videoPath
+                linkedMediaDialog.audioPath = audioPath
+                linkedMediaDialog.zoomPercent = zoomPercent
+                linkedMediaDialog.frame = frame
+                linkedMediaDialog.skipVideo = skipVideo
+                linkedMediaDialog.skipAudio = skipAudio
+                linkedMediaDialog.open()
+            } else {
+                mainWindow.openLinkedMedia(videoPath, audioPath, zoomPercent, frame, skipVideo, skipAudio)
+            }
+        }
+    }
+
     function closeChildWindows() {
         resampleDialog.close()
+        jumpDialog.close()
+        detailsDialog.close()
+        if (logWindow !== null) logWindow.close()
         if (searchWindow !== null) {
             searchWindow.close()
             searchWindow = null
@@ -205,6 +257,8 @@ ApplicationWindow {
             documentVM.newDocument()
         } else if (action === "open") {
             openDialog.open()
+        } else if (action === "recent") {
+            documentVM.openLocalPath(recentSubtitle)
         } else if (action === "quit") {
             forceClose = true
             mainWindow.close()
@@ -214,7 +268,9 @@ ApplicationWindow {
 
     // Used by File -> New / Open and the window close box: never throw away
     // unsaved changes without asking.
-    function requestAction(action) {
+    function requestAction(action, path) {
+        if (action === "recent")
+            recentSubtitle = path
         if (documentVM.dirty) {
             pendingAction = action
             unsavedDialog.open()
@@ -293,6 +349,7 @@ ApplicationWindow {
     Shortcut { sequence: "Alt+Down"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.moveSelectedRows(1) }
     Shortcut { sequence: "F3"; onActivated: mainWindow.findNext() }
     Shortcut { sequence: "Alt+O"; onActivated: mainWindow.openWindow("preferences") }
+    Shortcut { sequence: "Ctrl+G"; enabled: videoVM.hasVideo && !jumpDialog.visible; onActivated: jumpDialog.open() }
     Shortcut { sequence: "Ctrl+1"; enabled: mainWindow.canJump; onActivated: videoVM.seekToActiveLine() }
     Shortcut { sequence: "Ctrl+2"; enabled: mainWindow.canJump; onActivated: videoVM.seekToActiveLineEnd() }
     Shortcut { sequence: "Ctrl+3"; enabled: mainWindow.canSplit; onActivated: gridModel.snapToVideo(true) }
@@ -353,10 +410,12 @@ ApplicationWindow {
         Menu {
             title: i18n.t("File")
             width: 310
+            delegate: ShortcutMenuItem {}
             ShortcutMenuItem { text: i18n.t("New Subtitles"); shortcutText: "Ctrl+N"; onTriggered: mainWindow.requestAction("new") }
             ShortcutMenuItem { text: i18n.t("Open Subtitles..."); shortcutText: "Ctrl+O"; onTriggered: mainWindow.requestAction("open") }
             ShortcutMenuItem { text: i18n.t("Save Subtitles"); shortcutText: "Ctrl+S"; onTriggered: mainWindow.saveDocument() }
             ShortcutMenuItem { text: i18n.t("Save Subtitles as..."); shortcutText: "Ctrl+Shift+S"; onTriggered: saveAsDialog.open() }
+            RecentMenu { objectName: "recentSubtitlesMenu"; paths: mruVM.subtitles; onOpenPath: path => mainWindow.requestAction("recent", path) }
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Properties..."); onTriggered: mainWindow.openWindow("properties") }
             MenuSeparator {}
@@ -406,6 +465,8 @@ ApplicationWindow {
                 width: 210
                 ShortcutMenuItem { text: i18n.t("Before Current"); onTriggered: gridModel.insertBefore(gridModel.activeRow) }
                 ShortcutMenuItem { text: i18n.t("After Current"); onTriggered: gridModel.insertAfter(gridModel.activeRow) }
+                ShortcutMenuItem { text: i18n.t("Before Current, at Video Time"); enabled: videoVM.hasVideo; onTriggered: gridModel.insertAtVideoTime(false) }
+                ShortcutMenuItem { text: i18n.t("After Current, at Video Time"); enabled: videoVM.hasVideo; onTriggered: gridModel.insertAtVideoTime(true) }
             }
             ShortcutMenuItem {
                 text: i18n.t("Duplicate Lines")
@@ -448,8 +509,22 @@ ApplicationWindow {
                 ShortcutMenuItem { text: i18n.t("Actor Name"); onTriggered: gridModel.sortAllLines(3) }
                 ShortcutMenuItem { text: i18n.t("Effect"); onTriggered: gridModel.sortAllLines(4) }
                 ShortcutMenuItem { text: i18n.t("Text"); onTriggered: gridModel.sortAllLines(6) }
+                ShortcutMenuItem { text: i18n.t("Stripped Text"); onTriggered: gridModel.sortAllLines(7) }
                 ShortcutMenuItem { text: i18n.t("Layer"); onTriggered: gridModel.sortAllLines(5) }
             }
+            Menu {
+                title: i18n.t("Sort Selected Lines")
+                width: 210
+                ShortcutMenuItem { text: i18n.t("Start Time"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(0) }
+                ShortcutMenuItem { text: i18n.t("End Time"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(1) }
+                ShortcutMenuItem { text: i18n.t("Style Name"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(2) }
+                ShortcutMenuItem { text: i18n.t("Actor Name"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(3) }
+                ShortcutMenuItem { text: i18n.t("Effect"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(4) }
+                ShortcutMenuItem { text: i18n.t("Text"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(6) }
+                ShortcutMenuItem { text: i18n.t("Stripped Text"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(7) }
+                ShortcutMenuItem { text: i18n.t("Layer"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(5) }
+            }
+            ShortcutMenuItem { text: i18n.t("Swap Lines"); enabled: gridModel.selectionCount === 2; onTriggered: gridModel.swapSelectedLines() }
             ShortcutMenuItem { text: i18n.t("Select All"); shortcutText: "Ctrl+A"; onTriggered: gridModel.selectAll() }
         }
 
@@ -461,6 +536,7 @@ ApplicationWindow {
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Snap Start to Video"); shortcutText: "Ctrl+3"; enabled: mainWindow.canSplit; onTriggered: gridModel.snapToVideo(true) }
             ShortcutMenuItem { text: i18n.t("Snap End to Video"); shortcutText: "Ctrl+4"; enabled: mainWindow.canSplit; onTriggered: gridModel.snapToVideo(false) }
+            ShortcutMenuItem { text: i18n.t("Shift to Current Frame"); enabled: mainWindow.canSplit; onTriggered: gridModel.shiftSelectionToCurrentFrame() }
             MenuSeparator {}
             Menu {
                 title: i18n.t("Make Times Continuous")
@@ -472,11 +548,26 @@ ApplicationWindow {
 
         Menu {
             title: i18n.t("Video")
+            objectName: "videoMenu"
             width: 300
+            delegate: ShortcutMenuItem {}
             ShortcutMenuItem { text: i18n.t("Open Video..."); onTriggered: videoDialog.open() }
             ShortcutMenuItem { text: i18n.t("Close Video"); enabled: videoVM.hasVideo; onTriggered: videoVM.closeVideo() }
+            RecentMenu { objectName: "recentVideosMenu"; paths: mruVM.videos; onOpenPath: path => videoVM.openLocalPath(path) }
             ShortcutMenuItem { text: i18n.t("Use Dummy Video..."); onTriggered: videoVM.openDummyVideo(0, 0, 0, 0) }
+            ShortcutMenuItem { text: i18n.t("Show Video Details"); enabled: videoVM.hasVideo; onTriggered: detailsDialog.open() }
             MenuSeparator {}
+            Menu {
+                objectName: "zoomMenu"
+                title: i18n.t("Set Zoom")
+                enabled: videoVM.hasVideo
+                ShortcutMenuItem { text: i18n.t("Fit"); checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 0; onTriggered: videoVM.zoomPercent = 0 }
+                ShortcutMenuItem { text: "50%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 50; onTriggered: videoVM.zoomPercent = 50 }
+                ShortcutMenuItem { text: "100%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 100; onTriggered: videoVM.zoomPercent = 100 }
+                ShortcutMenuItem { text: "200%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 200; onTriggered: videoVM.zoomPercent = 200 }
+            }
+            MenuSeparator {}
+            ShortcutMenuItem { text: i18n.t("Jump to..."); shortcutText: "Ctrl+G"; enabled: videoVM.hasVideo; onTriggered: jumpDialog.open() }
             ShortcutMenuItem { text: i18n.t("Jump Video to Start"); shortcutText: "Ctrl+1"; enabled: mainWindow.canJump; onTriggered: videoVM.seekToActiveLine() }
             ShortcutMenuItem { text: i18n.t("Jump Video to End"); shortcutText: "Ctrl+2"; enabled: mainWindow.canJump; onTriggered: videoVM.seekToActiveLineEnd() }
         }
@@ -484,6 +575,7 @@ ApplicationWindow {
         Menu {
             title: i18n.t("Audio")
             width: 300
+            delegate: ShortcutMenuItem {}
             ShortcutMenuItem { text: i18n.t("Open Audio File..."); onTriggered: audioDialog.open() }
             ShortcutMenuItem {
                 text: i18n.t("Open Audio from Video")
@@ -492,6 +584,7 @@ ApplicationWindow {
             }
             ShortcutMenuItem { text: i18n.t("Select Audio Track..."); enabled: audioVM.hasAudio; onTriggered: audioVM.openAudioTrackPicker() }
             ShortcutMenuItem { text: i18n.t("Close Audio"); enabled: audioVM.hasAudio; onTriggered: audioVM.closeAudio() }
+            RecentMenu { objectName: "recentAudioMenu"; paths: mruVM.audio; onOpenPath: path => audioVM.openLocalPath(path) }
             ShortcutMenuItem { text: i18n.t("Use Dummy Audio"); onTriggered: audioVM.openDummyAudio() }
             MenuSeparator {}
             ShortcutMenuItem {
@@ -529,6 +622,17 @@ ApplicationWindow {
                 onTriggered: mainWindow.openWindow("preferences")
             }
             MenuSeparator {}
+            ButtonGroup { id: workspaceGroup }
+            ShortcutMenuItem { text: i18n.t("Subs Only View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 0; onTriggered: mainWindow.workspaceLayout = 0 }
+            ShortcutMenuItem { text: i18n.t("Video+Subs View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 1; onTriggered: mainWindow.workspaceLayout = 1 }
+            ShortcutMenuItem { text: i18n.t("Audio+Subs View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 2; onTriggered: mainWindow.workspaceLayout = 2 }
+            ShortcutMenuItem { text: i18n.t("Full view"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 3; onTriggered: mainWindow.workspaceLayout = 3 }
+            MenuSeparator {}
+            ButtonGroup { id: tagGroup }
+            ShortcutMenuItem { text: i18n.t("Show Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 0; onTriggered: gridModel.tagDisplayMode = 0 }
+            ShortcutMenuItem { text: i18n.t("Simplify Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 1; onTriggered: gridModel.tagDisplayMode = 1 }
+            ShortcutMenuItem { text: i18n.t("Hide Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 2; onTriggered: gridModel.tagDisplayMode = 2 }
+            MenuSeparator {}
             ShortcutMenuItem {
                 text: i18n.t("Dark Mode")
                 checkable: true
@@ -543,10 +647,90 @@ ApplicationWindow {
                 text: i18n.t("About")
                 onTriggered: mainWindow.openWindow("about")
             }
+            ShortcutMenuItem { text: i18n.t("Log Window"); onTriggered: mainWindow.openWindow("log") }
         }
     }
 
     // ---- Dialogs ---------------------------------------------------------
+
+    Dialog {
+        id: jumpDialog
+        objectName: "jumpDialog"
+        title: i18n.t("Jump to...")
+        modal: true
+        focus: true
+        anchors.centerIn: parent
+        width: 320
+        standardButtons: Dialog.Cancel
+        property bool invalid: false
+        function jump() {
+            if (videoVM.jumpTo(jumpInput.text)) close()
+            else invalid = true
+        }
+        onOpened: {
+            invalid = false
+            jumpInput.text = String(videoVM.currentFrame)
+            jumpInput.forceActiveFocus()
+            jumpInput.selectAll()
+        }
+        contentItem: ColumnLayout {
+            TextField {
+                id: jumpInput
+                objectName: "jumpInput"
+                Layout.fillWidth: true
+                placeholderText: i18n.t("Frame or H:MM:SS.CC")
+                onAccepted: jumpDialog.jump()
+                onTextEdited: jumpDialog.invalid = false
+            }
+            Label { visible: jumpDialog.invalid; text: i18n.t("Invalid frame or timecode") }
+            Button { Layout.alignment: Qt.AlignRight; text: i18n.t("Jump"); onClicked: jumpDialog.jump() }
+        }
+    }
+
+    Dialog {
+        id: detailsDialog
+        objectName: "videoDetailsDialog"
+        title: i18n.t("Video Details")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(540, mainWindow.width - 32)
+        standardButtons: Dialog.Close
+        contentItem: GridLayout {
+            columns: 2
+            Label { text: i18n.t("Path") }
+            Label { Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; text: videoVM.filePath || i18n.t("Dummy Video") }
+            Label { text: i18n.t("Resolution") }
+            Label { text: videoVM.videoWidth + " × " + videoVM.videoHeight }
+            Label { text: i18n.t("FPS") }
+            Label { text: Number(videoVM.fps).toFixed(3) }
+            Label { text: i18n.t("Frames") }
+            Label { text: videoVM.frameCount }
+            Label { text: i18n.t("Keyframes") }
+            Label { text: videoVM.keyframeCount }
+        }
+    }
+
+    Dialog {
+        id: linkedMediaDialog
+        title: i18n.t("Load Linked Files?")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(540, mainWindow.width - 32)
+        standardButtons: Dialog.Yes | Dialog.No
+        property string videoPath: ""
+        property string audioPath: ""
+        property int zoomPercent: 0
+        property int frame: -1
+        property bool skipVideo: false
+        property bool skipAudio: false
+        onAccepted: mainWindow.openLinkedMedia(videoPath, audioPath, zoomPercent, frame, skipVideo, skipAudio)
+        contentItem: Label {
+            wrapMode: Text.WrapAnywhere
+            text: [linkedMediaDialog.skipVideo ? "" : (linkedMediaDialog.videoPath || (videoVM.hasVideo ? i18n.t("Close Video") : "")),
+                   linkedMediaDialog.skipAudio ? "" : (linkedMediaDialog.audioPath || (audioVM.hasAudio ? i18n.t("Close Audio") : ""))]
+                  .filter(path => path.length > 0).join("\n")
+        }
+    }
 
     ResampleDialog { id: resampleDialog }
 
@@ -704,7 +888,8 @@ ApplicationWindow {
 
             SplitView {
                 id: mediaSplit
-                visible: videoVM.hasVideo || audioVM.hasAudio
+                objectName: "mediaSplit"
+                visible: mainWindow.showVideoPanel || mainWindow.showAudioPanel
                 SplitView.preferredHeight: 300
                 SplitView.minimumHeight: 180
                 orientation: Qt.Horizontal
@@ -716,17 +901,19 @@ ApplicationWindow {
 
                 Loader {
                     id: videoPanelLoader
+                    objectName: "videoPanelLoader"
                     source: "qrc:/VideoPanel.qml"
-                    visible: videoVM.hasVideo
+                    visible: mainWindow.showVideoPanel
                     SplitView.preferredWidth: 460
                     SplitView.minimumWidth: 320
-                    SplitView.fillWidth: !audioVM.hasAudio
+                    SplitView.fillWidth: !mainWindow.showAudioPanel
                 }
 
                 Loader {
                     id: audioPanelLoader
+                    objectName: "audioPanelLoader"
                     source: "qrc:/AudioPanel.qml"
-                    visible: audioVM.hasAudio
+                    visible: mainWindow.showAudioPanel
                     SplitView.fillWidth: true
                     SplitView.minimumWidth: 320
                 }

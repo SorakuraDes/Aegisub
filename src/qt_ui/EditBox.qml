@@ -13,7 +13,7 @@ Rectangle {
     radius: themeVM.radiusMedium
 
     AssSyntaxHighlighter {
-        target: textArea.textDocument
+        target: preferencesVM.syntaxHighlighting ? textArea.textDocument : null
         primary: themeVM.primary
         darkMode: themeVM.darkMode
     }
@@ -293,7 +293,7 @@ Rectangle {
                 rightPadding: 10
                 topPadding: 8
                 bottomPadding: 8
-                font.pixelSize: 14
+                font.pointSize: preferencesVM.editFontSize
                 textFormat: TextEdit.PlainText
                 color: themeVM.onSurface
                 wrapMode: TextArea.Wrap
@@ -304,6 +304,17 @@ Rectangle {
                 onTextChanged: if (editBox.editorReady && editBoxVM.text !== text) editBoxVM.text = text
                 background: null
             }
+        }
+        Label {
+            id: characterCount
+            objectName: "editBoxCharacterCount"
+            Layout.alignment: Qt.AlignRight
+            visible: gridModel.activeRow >= 0
+            readonly property int count: editBoxVM.longestVisibleLineLength(textArea.text)
+            readonly property int limit: preferencesVM.characterLimit
+            text: limit > 0 ? count + " / " + limit : String(count)
+            color: limit > 0 && count > limit ? themeVM.danger : themeVM.onSurfaceVariant
+            Accessible.name: i18n.t("Characters in longest line")
         }
     }
 

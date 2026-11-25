@@ -15,6 +15,7 @@ class VideoViewportItem : public QQuickPaintedItem {
     Q_OBJECT
     Q_PROPERTY(QImage frame READ frame WRITE setFrame NOTIFY frameChanged)
     Q_PROPERTY(QRectF contentRect READ contentRect NOTIFY contentRectChanged)
+    Q_PROPERTY(int zoomPercent READ zoomPercent WRITE setZoomPercent NOTIFY zoomPercentChanged)
 
 public:
     explicit VideoViewportItem(QQuickItem *parent = nullptr);
@@ -22,12 +23,15 @@ public:
     QImage frame() const;
     void setFrame(const QImage &frame);
     QRectF contentRect() const;
+    int zoomPercent() const { return zoom_percent_; }
+    void setZoomPercent(int percent);
 
     void paint(QPainter *painter) override;
 
 signals:
     void frameChanged();
     void contentRectChanged();
+    void zoomPercentChanged();
 
 protected:
     void geometryChange(const QRectF &new_geometry, const QRectF &old_geometry) override;
@@ -37,4 +41,5 @@ private:
 
     QImage frame_;
     QRectF content_rect_;
+    int zoom_percent_ = 0;
 };

@@ -1,11 +1,13 @@
 // Must come before any Qt header: agi::signal (via ass_file.h) has members
 // named `slots`, and Qt defines `signals`/`slots` as macros.
 #include "../../ass_file.h"
+#include "../../options.h"
 
 #include "undo_manager.h"
 
 #include "../commit_bridge.h"
 
+#include <algorithm>
 #include <utility>
 
 UndoManager::UndoManager(AssFile *file, QObject *parent)
@@ -18,6 +20,15 @@ UndoManager::UndoManager(AssFile *file, QObject *parent)
             [this](const std::string &description, int *commit_id, AssDialogue *) {
                 onPushState(description, commit_id);
             });
+    }
+    if (config::opt) {
+        const auto readLimit = [this](const agi::OptionValue &value) {
+            undo_levels_ = int(std::clamp<int64_t>(value.GetInt(), 2, 10000));
+            trimHistory();
+            notifyAll();
+        };
+        readLimit(*OPT_GET("Limits/Undo Levels"));
+        undo_levels_subscription_ = OPT_SUB("Limits/Undo Levels", readLimit);
     }
     resetToClean();
 }
@@ -100,12 +111,14 @@ void UndoManager::onPushState(const std::string &description, int *commit_id) {
             entry.description = QString::fromUtf8(description.c_str(), int(description.size()));
         if (commit_id)
             *commit_id = amend_id;
+        emit contentEdited();
         return;
     }
 
     // A genuinely new step drops the redo branch.
     while (int(entries_.size()) > pos_ + 1)
         entries_.pop_back();
+    if (saved_pos_ > pos_) saved_pos_ = -1;
 
     Entry entry;
     entry.file = makeSnapshot();
@@ -120,6 +133,7 @@ void UndoManager::onPushState(const std::string &description, int *commit_id) {
     coalesce_allowed_ = true;
     trimHistory();
     notifyAll();
+    emit contentEdited();
 }
 
 void UndoManager::restoreTo(int pos) {
@@ -143,11 +157,16 @@ void UndoManager::restoreTo(int pos) {
 }
 
 void UndoManager::trimHistory() {
-    while (int(entries_.size()) > kMaxEntries) {
-        entries_.pop_front();
-        --pos_;
-        if (saved_pos_ >= 0)
-            --saved_pos_;
+    // Preserve the displayed state when Preferences changes during an undo.
+    while (int(entries_.size()) > undo_levels_ + 1) {
+        if (pos_ > 0) {
+            entries_.pop_front();
+            --pos_;
+            if (saved_pos_ >= 0) --saved_pos_;
+        } else {
+            entries_.pop_back();
+            if (saved_pos_ >= int(entries_.size())) saved_pos_ = -1;
+        }
     }
 }
 

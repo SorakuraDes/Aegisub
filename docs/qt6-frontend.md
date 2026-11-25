@@ -4,6 +4,20 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 15B：多页 Preferences 与 Tier 1 菜单
+
+基线 `feature@7a0f62002`。[Preferences](../src/qt_ui/PreferencesWindow.qml)分为 General、Appearance、Audio、Video、Interface、Backup、Advanced (FFMS2)；设置通过[配置模型](../src/qt_ui/viewmodels/preferences_vm.cpp)连接原版 `agi::Options`，即时写入 `config.json`。Appearance 保留动态 OKLCH 色板和十六进制主色。播放跟随、吸附和字幕同步即时联动；视频自动载音及 FFMS2 解码线程、Unsafe Seeking 在打开媒体时应用。
+
+- File、Video、Audio 的 Recent 在成功打开文件后更新，通过 `?user/mru.json` 保存 Unicode 路径；重开字幕遵循未保存更改确认。
+- Subtitle 新增按视频帧插入、Stripped Text 排序、只重排选区的八字段排序及两行交换；Timing 新增整组选区平移至当前帧。实际变更各生成一条撤销记录。
+- Video 新增 `Ctrl+G` 帧号/ASS 时间码跳转、视频详情及 Fit/50%/100%/200% 缩放。预览裁切不改变视觉工具使用的完整视频坐标矩形。
+- View 的四种布局仅变更面板可见性；三种标签模式仅改变网格显示，不写回 ASS 文本。Help 的 Log Window 查看、复制或清空内存环形缓冲，stderr 筛选规则不变。
+- [无头集成测试](../src/qt_ui/stage15b_integration_test.cpp)使用真实 QML 和临时用户配置，验证高亮、正文字号、滚动跟随、字幕同步与撤销上限即时生效，子进程重启重读配置；另覆盖三类中文路径 Recent、插行/排序/交换/平移与撤销、跳转、视图、标签、200% 缩放定位拖拽以及日志的显示、复制和清空。
+
+**审查修复与封板验证**：每次修改保存仅对可无损写回的 `.ass` 原地保存；其他格式和定时自动保存只写 ASS 恢复副本，保留原文件及脏标记。首次打开真实视频时按需补写文档缺失的 PlayRes；切换视频时替换旧自动音轨，保留手动音源。ASS 往返保存音视频关联路径、活动行、网格滚动、帧号和缩放。可见区域可直接拖出新矩形裁剪。配置写盘失败有提示且可重试，FFMS2 日志级别兼容原版大小写并支持全部档位。
+
+[回归测试](../src/qt_ui/stage15b_integration_test.cpp)覆盖两种 SRT 自动保存、PlayRes 写盘、连续有声视频、界面状态和媒体往返，以及 200% 裁切下不同 PlayRes 的定位和矩形裁剪。Qt 单目标、wx + Qt 双轨均退出 0；显式使用 Qt SDK 插件目录的 [Meson 复测](../build/meson-logs/stage15b-seal.txt)共三轮 12/12 通过，所有测试进程和配置重启子进程退出 0、stderr 为空。
+
 ## Stage 15：原版菜单与高频编辑命令
 
 基线 `feature@276856d8b`，本阶段按双轨构建和 Qt 验收封板。Qt 主菜单按 Stage 15 支持范围对齐[原版菜单](../src/libresrc/default_menu.json)和[默认快捷键](../src/libresrc/default_hotkey.json)，Automation 留待 Stage 16。按本阶段约定，`Delete` 删除字幕行、`Ctrl+Space` 播放活动行音频；`Alt+Up` / `Alt+Down` 只注册快捷键，不出现在主菜单。

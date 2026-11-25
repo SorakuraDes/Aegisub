@@ -43,6 +43,7 @@ public:
     explicit UndoManager(AssFile *file, QObject *parent = nullptr);
     ~UndoManager() override;
 
+    int undoLevels() const { return undo_levels_; }
     bool canUndo() const;
     bool canRedo() const;
     QString undoDescription() const;
@@ -67,6 +68,7 @@ signals:
     void undoDescriptionChanged();
     void redoDescriptionChanged();
     void isModifiedChanged();
+    void contentEdited();
 
     /// Emitted after undo()/redo() swapped a snapshot into the AssFile.
     ///
@@ -83,8 +85,8 @@ private:
         int commit_id = 0;
     };
 
-    /// Hard cap on the snapshot stack; older entries are dropped off the front.
-    static constexpr int kMaxEntries = 100;
+    int undo_levels_ = 100;
+    agi::signal::Connection undo_levels_subscription_;
 
     void onPushState(const std::string &description, int *commit_id);
     std::shared_ptr<AssFile> makeSnapshot() const;

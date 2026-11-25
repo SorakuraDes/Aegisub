@@ -1,3 +1,4 @@
+#include "../../options.h"
 #include "theme_vm.h"
 #include "../aegisub_core.h"
 
@@ -69,8 +70,14 @@ ThemeViewModel::ThemeViewModel(QObject *parent) : QObject(parent) {
         QSettings store(settingsPath_, QSettings::IniFormat);
         const QColor stored(store.value("Appearance/seedColor").toString());
         if (stored.isValid() && stored.alpha() == 255) seed_ = stored;
-        const auto dark = store.value("Appearance/darkMode").toString();
-        if (dark == QStringLiteral("false")) dark_ = false;
+    }
+    if (config::opt) {
+        dark_ = OPT_GET("App/Dark Mode")->GetBool();
+        darkModeSubscription_ = OPT_SUB("App/Dark Mode", [this](const agi::OptionValue &value) {
+            dark_ = value.GetBool();
+            refreshPalette();
+            emit themeChanged();
+        });
     }
     refreshPalette();
 }
@@ -86,18 +93,22 @@ void ThemeViewModel::setSeedColor(const QColor &color) {
 }
 
 void ThemeViewModel::setDarkMode(bool dark) {
-    if (dark_ == dark) return;
-    dark_ = dark;
-    refreshPalette();
-    save();
-    emit themeChanged();
+    if (config::opt) {
+        if (OPT_GET("App/Dark Mode")->GetBool() == dark) return;
+        OPT_SET("App/Dark Mode")->SetBool(dark);
+        QString error;
+        if (!aegisub_qt::FlushOptions(&error)) qWarning() << "[theme]" << error;
+    } else if (dark_ != dark) {
+        dark_ = dark;
+        refreshPalette();
+        emit themeChanged();
+    }
 }
 
 void ThemeViewModel::save() {
     if (settingsPath_.isEmpty()) return;
     QSettings store(settingsPath_, QSettings::IniFormat);
     store.setValue("Appearance/seedColor", seed_.name());
-    store.setValue("Appearance/darkMode", dark_);
     store.sync();
     if (store.status() != QSettings::NoError)
         qWarning() << "[theme] Could not save appearance to" << settingsPath_;

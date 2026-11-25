@@ -28,6 +28,12 @@ using TrackSelector =
 void SetTrackSelector(TrackSelector selector);
 void ClearTrackSelector();
 
+/// Returns the lowercase log level name, or an empty string for unknown levels.
+std::string NormalizeFfmsLogLevel(std::string level);
+
+/// Apply the currently configured FFMS2 log level to the running process.
+void ApplyFfmsLogLevel();
+
 /// Enumerate the tracks of `path` of the requested kind without writing an
 /// index file. Returns false and fills `error` when the container cannot be
 /// opened; an existing container without tracks of that kind returns true with

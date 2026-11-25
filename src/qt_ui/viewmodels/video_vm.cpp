@@ -17,7 +17,13 @@
 #include "audio_vm.h"
 
 #include "../video_bridge.h"
+#include "../commit_bridge.h"
 #include "../qt_path.h"
+#include "../aegisub_core.h"
+#include "../ffmpegsource_common_qt.h"
+
+#include <QRegularExpression>
+#include <limits>
 
 #include <libaegisub/ass/time.h>
 #include <libaegisub/exception.h>
@@ -89,6 +95,13 @@ VideoViewModel::VideoViewModel(AssFile *file, SubtitleGridModel *gridModel,
 , undo_manager_(undoManager)
 , bridge_(std::make_unique<aegisub_qt::VideoBridge>())
 {
+    if (config::opt) {
+        ffms_log_option_ = OPT_SUB("Provider/FFmpegSource/Log Level", &aegisub_qt::ApplyFfmsLogLevel);
+        auto_seek_ = OPT_GET("Video/Subtitle Sync")->GetBool();
+        auto_seek_option_ = OPT_SUB("Video/Subtitle Sync", [this] {
+            setAutoSeekToActiveLine(OPT_GET("Video/Subtitle Sync")->GetBool());
+        });
+    }
     playback_timer_.setTimerType(Qt::PreciseTimer);
     connect(&playback_timer_, &QTimer::timeout, this, &VideoViewModel::onPlaybackTick);
 
@@ -133,7 +146,20 @@ QString VideoViewModel::currentTimeText() const {
     return QString::fromStdString(agi::Time(currentTimeMs()).GetAssFormatted());
 }
 
+void VideoViewModel::setZoomPercent(int percent) {
+    if ((percent != 0 && percent != 50 && percent != 100 && percent != 200) ||
+        zoom_percent_ == percent)
+        return;
+    zoom_percent_ = percent;
+    emit zoomPercentChanged();
+}
+
 void VideoViewModel::setAutoSeekToActiveLine(bool enabled) {
+    if (config::opt && OPT_GET("Video/Subtitle Sync")->GetBool() != enabled) {
+        OPT_SET("Video/Subtitle Sync")->SetBool(enabled);
+        aegisub_qt::FlushOptions();
+        return;
+    }
     if (auto_seek_ == enabled)
         return;
 
@@ -215,12 +241,10 @@ bool VideoViewModel::openLocalPathImpl(const QString &path, int trackId, bool in
     file_path_ = info.absoluteFilePath();
     onVideoOpened(info.fileName());
 
-    // A real video usually carries an audio track: load it into the audio panel
-    // as well unless the user already opened something there. A video without an
-    // audio track is a normal case, so failures stay silent (no error banner).
-    if (audio_vm_ && !audio_vm_->hasAudio())
-        audio_vm_->openLocalPathQuiet(file_path_);
+    if (audio_vm_)
+        audio_vm_->updateAudioFromVideo(file_path_, !config::opt || OPT_GET("Video/Open Audio")->GetBool());
 
+    emit fileOpened(file_path_);
     return true;
 }
 
@@ -234,8 +258,12 @@ bool VideoViewModel::openDummyVideo(int width, int height, double fps_value, int
         }
     }
     if (resolved_width <= 0 || resolved_height <= 0) {
-        resolved_width = 1280;
-        resolved_height = 720;
+        resolved_width = config::opt
+            ? int(std::clamp<int64_t>(OPT_GET("Subtitle/Default Resolution/Width")->GetInt(), 1, 16384))
+            : 1280;
+        resolved_height = config::opt
+            ? int(std::clamp<int64_t>(OPT_GET("Subtitle/Default Resolution/Height")->GetInt(), 1, 16384))
+            : 720;
     }
 
     if (fps_value <= 0.0)
@@ -254,6 +282,8 @@ bool VideoViewModel::openDummyVideo(int width, int height, double fps_value, int
                       .arg(resolved_width)
                       .arg(resolved_height)
                       .arg(fps_value, 0, 'f', 3));
+    if (audio_vm_)
+        audio_vm_->updateAudioFromVideo({}, false);
     return true;
 }
 
@@ -308,6 +338,42 @@ void VideoViewModel::seekToTimeMs(int ms) {
     if (!hasVideo())
         return;
     seekFrame(bridge_->FrameAtTime(ms));
+}
+
+bool VideoViewModel::jumpTo(const QString &value) {
+    if (!hasVideo() || frameCount() <= 0)
+        return false;
+
+    const QString input = value.trimmed();
+    static const QRegularExpression framePattern(QStringLiteral("\\A[0-9]+\\z"));
+    if (framePattern.match(input).hasMatch()) {
+        bool ok = false;
+        const int frame = input.toInt(&ok);
+        if (!ok || frame >= frameCount())
+            return false;
+        seekFrame(frame);
+        return true;
+    }
+
+    static const QRegularExpression timePattern(
+        QStringLiteral("\\A([0-9]+):([0-5][0-9]):([0-5][0-9])\\.([0-9]{2})\\z"));
+    const auto match = timePattern.match(input);
+    if (!match.hasMatch())
+        return false;
+
+    bool ok = false;
+    const int hours = match.captured(1).toInt(&ok);
+    if (!ok)
+        return false;
+    const qint64 ms = hours * 3600000LL + match.captured(2).toInt() * 60000LL
+        + match.captured(3).toInt() * 1000LL + match.captured(4).toInt() * 10LL;
+    if (ms > std::numeric_limits<int>::max())
+        return false;
+    const int frame = bridge_->FrameAtTime(int(ms));
+    if (frame < 0 || frame >= frameCount())
+        return false;
+    seekFrame(frame);
+    return true;
 }
 
 void VideoViewModel::seekToActiveLine() {
@@ -395,11 +461,22 @@ void VideoViewModel::onVideoOpened(const QString &name) {
     video_name_ = name;
     resetError();
 
-    playing_ = false;
-    playback_timer_.stop();
+    stopPlayback();
     current_frame_ = -1;
     pending_track_path_.clear();
 
+    if (file_ && !file_path_.isEmpty() && config::opt &&
+        OPT_GET("Subtitle/Default Resolution/Auto")->GetBool() &&
+        videoWidth() > 0 && videoHeight() > 0) {
+        const bool missingX = file_->GetScriptInfoAsInt("PlayResX") <= 0;
+        const bool missingY = file_->GetScriptInfoAsInt("PlayResY") <= 0;
+        if (missingX) file_->SetScriptInfo("PlayResX", std::to_string(videoWidth()));
+        if (missingY) file_->SetScriptInfo("PlayResY", std::to_string(videoHeight()));
+        if (missingX || missingY)
+            aegisub_qt::commit(file_, "set script resolution from video", AssFile::COMMIT_SCRIPTINFO);
+    }
+    subtitle_reload_timer_.stop();
+    visual_reload_pending_ = false;
     loadSubtitleTrack();
 
     rebuildKeyframes();

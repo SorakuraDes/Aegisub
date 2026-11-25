@@ -595,7 +595,8 @@ void VisualOverlayItem::mousePressEvent(QMouseEvent *event) {
             drag = Drag::ResizeClip;
         else if (!in_video)
             return;
-        else if (clip.contains(coord))
+        // The full-frame guide for an unclipped line is not an existing clip to move.
+        else if (vm_->hasRectClip() && clip.contains(coord))
             drag = Drag::TranslateClip;
         else
             drag = Drag::NewClip;

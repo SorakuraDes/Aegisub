@@ -5,6 +5,8 @@
     <file>EditBox.qml</file>
     <file>AboutWindow.qml</file>
     <file>PreferencesWindow.qml</file>
+    <file>RecentMenu.qml</file>
+    <file>LogWindow.qml</file>
     <file>PropertiesWindow.qml</file>
     <file>SearchDialog.qml</file>
     <file>StylesWindow.qml</file>

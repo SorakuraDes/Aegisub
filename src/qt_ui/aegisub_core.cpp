@@ -27,9 +27,12 @@
 #include <QTemporaryFile>
 
 #include <cstdio>
+#include <deque>
 #include <exception>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <utility>
 
 // The wxWidgets frontend defines these in src/main.cpp. The Qt frontend is a
 // separate executable, so it provides its own definitions here.
@@ -102,6 +105,38 @@ bool prepareDirectory(QString const &path) {
     return probe.open();
 }
 
+struct RecentLog {
+    static constexpr size_t capacity = 1024;
+    std::mutex mutex;
+    std::deque<QString> lines;
+    quint64 revision = 0;
+};
+
+RecentLog &recentLog() {
+    // The process-wide libaegisub sink and dispatch queue can outlive QApplication.
+    static auto *const buffer = new RecentLog;
+    return *buffer;
+}
+
+void appendRecentLog(const agi::log::SinkMessage &message, char severity) {
+    constexpr qsizetype componentLimit = 4096;
+    QString line = QStringLiteral("[%1] %2:%3 %4 %5").arg(QString::fromUtf8(message.section));
+    line = line.arg(QString::fromUtf8(message.file).left(componentLimit));
+    line = line.arg(message.line);
+    line = line.arg(QChar::fromLatin1(severity));
+    line = line.arg(QString::fromUtf8(message.message.data(),
+        qMin(qsizetype(message.message.size()), componentLimit)));
+    if (message.message.size() > size_t(componentLimit))
+        line += QStringLiteral(" [...]");
+
+    auto &buffer = recentLog();
+    const std::lock_guard<std::mutex> lock(buffer.mutex);
+    buffer.lines.push_back(std::move(line));
+    if (buffer.lines.size() > RecentLog::capacity)
+        buffer.lines.pop_front();
+    ++buffer.revision;
+}
+
 /// Log emitter for the Qt frontend.
 ///
 /// libaegisub's Windows EmitSTDOUT (libaegisub/windows/log_win.cpp) converts
@@ -118,10 +153,15 @@ bool prepareDirectory(QString const &path) {
 class StderrLogEmitter final : public agi::log::Emitter {
 public:
     void log(agi::log::SinkMessage const &message) noexcept override {
+        const char severity = agi::log::Severity_ID[int(message.severity)];
+        try {
+            appendRecentLog(message, severity);
+        } catch (...) {
+            // Diagnostics must not terminate the background logging thread.
+        }
         if (message.severity > agi::log::Warning && !verbose_)
             return;
 
-        const char severity = agi::log::Severity_ID[int(message.severity)];
         std::fprintf(stderr, "[%s] %s:%d %c %s\n", message.section, message.file,
                      message.line, severity, message.message.c_str());
         std::fflush(stderr);
@@ -139,6 +179,35 @@ private:
 } // namespace
 
 namespace aegisub_qt {
+
+bool ReadRecentLog(quint64 &revision, QString &text) {
+    auto &buffer = recentLog();
+    std::deque<QString> lines;
+    {
+        const std::lock_guard<std::mutex> lock(buffer.mutex);
+        if (revision == buffer.revision)
+            return false;
+        lines = buffer.lines;
+        revision = buffer.revision;
+    }
+
+    text.clear();
+    for (const auto &line : lines) {
+        if (!text.isEmpty())
+            text += QLatin1Char('\n');
+        text += line;
+    }
+    return true;
+}
+
+void ClearRecentLog() {
+    auto &buffer = recentLog();
+    const std::lock_guard<std::mutex> lock(buffer.mutex);
+    if (!buffer.lines.empty()) {
+        buffer.lines.clear();
+        ++buffer.revision;
+    }
+}
 
 bool InitializeCore(QString *error) {
     auto fail = [error](const QString &message) {

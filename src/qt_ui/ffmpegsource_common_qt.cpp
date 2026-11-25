@@ -56,6 +56,7 @@
 #include <libaegisub/path.h>
 
 #include <boost/algorithm/string/case_conv.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include <boost/crc.hpp>
 #include <boost/filesystem/path.hpp>
 
@@ -74,6 +75,27 @@ namespace {
 
 std::mutex g_selector_mutex;
 TrackSelector g_selector;
+
+struct LogLevel {
+    const char *name;
+    int value;
+};
+
+constexpr LogLevel logLevels[] = {
+    {"quiet", FFMS_LOG_QUIET}, {"panic", FFMS_LOG_PANIC}, {"fatal", FFMS_LOG_FATAL},
+    {"error", FFMS_LOG_ERROR}, {"warning", FFMS_LOG_WARNING}, {"info", FFMS_LOG_INFO},
+    {"verbose", FFMS_LOG_VERBOSE}, {"debug", FFMS_LOG_DEBUG}, {"trace", FFMS_LOG_TRACE},
+};
+
+const LogLevel *FindLogLevel(std::string &level) {
+    boost::to_lower(level);
+    boost::trim(level);
+    for (const auto &entry : logLevels) {
+        if (level == entry.name)
+            return &entry;
+    }
+    return nullptr;
+}
 
 TrackSelector CopySelector() {
     std::lock_guard<std::mutex> lock(g_selector_mutex);
@@ -103,7 +125,7 @@ bool ProbeTracks(agi::fs::path const &path, MediaKind kind,
         // "Pass 0 to both arguments"). The provider below calls it as well, but
         // FFMS_CreateIndexer must not run first; the wx frontend happened to be
         // fine only because the process had opened a provider earlier.
-        FFMS_Init(0, 0);
+        ApplyFfmsLogLevel();
 
         char error_buffer[1024] = {};
         FFMS_ErrorInfo error_info;
@@ -255,7 +277,10 @@ FFmpegSourceProvider::AskForTrackSelection(const std::map<int, std::string> &Tra
 }
 
 /// @brief Set ffms2 log level according to setting in config.dat
-void FFmpegSourceProvider::SetLogLevel() {
+void aegisub_qt::ApplyFfmsLogLevel() {
+    FFMS_Init(0, 0);
+    if (!config::opt)
+        return;
     // Escape hatch for debugging libavformat/libffms2 indexing from the Qt
     // process: AEGISUB_QT_FFMS_DEBUG=1 forces the debug log level.
     if (const char *debug = std::getenv("AEGISUB_QT_FFMS_DEBUG")) {
@@ -265,26 +290,18 @@ void FFmpegSourceProvider::SetLogLevel() {
         }
     }
 
-    auto LogLevel = OPT_GET("Provider/FFmpegSource/Log Level")->GetString();
-    boost::to_lower(LogLevel);
-
-    if (LogLevel == "panic")
-        FFMS_SetLogLevel(FFMS_LOG_PANIC);
-    else if (LogLevel == "fatal")
-        FFMS_SetLogLevel(FFMS_LOG_FATAL);
-    else if (LogLevel == "error")
-        FFMS_SetLogLevel(FFMS_LOG_ERROR);
-    else if (LogLevel == "warning")
-        FFMS_SetLogLevel(FFMS_LOG_WARNING);
-    else if (LogLevel == "info")
-        FFMS_SetLogLevel(FFMS_LOG_INFO);
-    else if (LogLevel == "verbose")
-        FFMS_SetLogLevel(FFMS_LOG_VERBOSE);
-    else if (LogLevel == "debug")
-        FFMS_SetLogLevel(FFMS_LOG_DEBUG);
-    else
-        FFMS_SetLogLevel(FFMS_LOG_QUIET);
+    auto value = OPT_GET("Provider/FFmpegSource/Log Level")->GetString();
+    const auto *level = aegisub_qt::FindLogLevel(value);
+    FFMS_SetLogLevel(level ? level->value : FFMS_LOG_QUIET);
 }
+
+std::string aegisub_qt::NormalizeFfmsLogLevel(std::string value) {
+    if (const auto *level = FindLogLevel(value))
+        return level->name;
+    return {};
+}
+
+void FFmpegSourceProvider::SetLogLevel() { aegisub_qt::ApplyFfmsLogLevel(); }
 
 FFMS_IndexErrorHandling FFmpegSourceProvider::GetErrorHandlingMode() {
     auto Mode = OPT_GET("Provider/Audio/FFmpegSource/Decode Error Handling")->GetString();

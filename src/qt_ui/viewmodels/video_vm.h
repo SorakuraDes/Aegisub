@@ -47,6 +47,8 @@ class VideoViewModel final : public QObject {
     Q_PROPERTY(double fps READ fps NOTIFY videoInfoChanged)
     Q_PROPERTY(int videoWidth READ videoWidth NOTIFY videoInfoChanged)
     Q_PROPERTY(int videoHeight READ videoHeight NOTIFY videoInfoChanged)
+    // 0 = fit; the other values scale native video pixels.
+    Q_PROPERTY(int zoomPercent READ zoomPercent WRITE setZoomPercent NOTIFY zoomPercentChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY isPlayingChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     /// Seek the video to the start of the active subtitle line when the grid
@@ -77,6 +79,8 @@ public:
     int videoHeight() const;
     bool isPlaying() const;
     QString lastError() const;
+    int zoomPercent() const { return zoom_percent_; }
+    void setZoomPercent(int percent);
     bool autoSeekToActiveLine() const;
     void setAutoSeekToActiveLine(bool enabled);
 
@@ -121,6 +125,7 @@ public:
     Q_INVOKABLE void seekFrame(int frame);
     Q_INVOKABLE void stepFrame(int delta);
     Q_INVOKABLE void seekToTimeMs(int ms);
+    Q_INVOKABLE bool jumpTo(const QString &value);
     Q_INVOKABLE void seekToActiveLine();
     Q_INVOKABLE void seekToActiveLineEnd();
     Q_INVOKABLE void togglePlay();
@@ -136,6 +141,8 @@ signals:
     void hasVideoChanged();
     void videoNameChanged();
     void videoInfoChanged();
+    void zoomPercentChanged();
+    void fileOpened(const QString &path);
     void currentFrameChanged();
     void isPlayingChanged();
     void lastErrorChanged();
@@ -188,6 +195,9 @@ private:
     int current_frame_ = -1;
     bool playing_ = false;
     bool auto_seek_ = true;
+    int zoom_percent_ = 0;
+    agi::signal::Connection auto_seek_option_;
+    agi::signal::Connection ffms_log_option_;
     bool current_frame_is_keyframe_ = false;
     std::vector<int> keyframe_times_ms_;
     /// True while playback is clocked by the audio player instead of the wall

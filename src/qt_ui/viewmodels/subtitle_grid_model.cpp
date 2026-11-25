@@ -33,8 +33,7 @@ constexpr int kFallbackDefaultDurationMs = 3000;
 int defaultDurationMs() {
     if (!config::opt)
         return kFallbackDefaultDurationMs;
-    const int duration = OPT_GET("Timing/Default Duration")->GetInt();
-    return duration > 0 ? duration : kFallbackDefaultDurationMs;
+    return std::max(0, int(OPT_GET("Timing/Default Duration")->GetInt()));
 }
 
 std::string toUtf8StdString(const QString &s) {
@@ -368,6 +367,49 @@ int SubtitleGridModel::rowCount(const QModelIndex &parent) const {
     return int(rows_.size());
 }
 
+void SubtitleGridModel::setTagDisplayMode(int mode) {
+    if (mode < ShowTags || mode > HideTags || tag_display_mode_ == mode)
+        return;
+    tag_display_mode_ = mode;
+    emit tagDisplayModeChanged();
+    notifyDisplayTextChanged();
+}
+
+void SubtitleGridModel::setHideOverridesChar(const QString &marker) {
+    if (hide_overrides_char_ == marker)
+        return;
+    hide_overrides_char_ = marker;
+    emit hideOverridesCharChanged();
+    if (tag_display_mode_ == SimplifyTags)
+        notifyDisplayTextChanged();
+}
+
+void SubtitleGridModel::notifyDisplayTextChanged() {
+    if (!rows_.empty())
+        emit dataChanged(index(0), index(lineCount() - 1), {DisplayTextRole});
+}
+
+QString SubtitleGridModel::formatDisplayText(const QString &text) const {
+    if (tag_display_mode_ == ShowTags)
+        return text;
+
+    QString display;
+    display.reserve(text.size());
+    qsizetype start = 0;
+    while (true) {
+        const auto open = text.indexOf(QLatin1Char('{'), start);
+        const auto close = open < 0 ? -1 : text.indexOf(QLatin1Char('}'), open + 1);
+        if (close < 0)
+            break;
+        display += QStringView(text).sliced(start, open - start);
+        if (tag_display_mode_ == SimplifyTags)
+            display += hide_overrides_char_;
+        start = close + 1;
+    }
+    display += QStringView(text).sliced(start);
+    return display;
+}
+
 QVariant SubtitleGridModel::data(const QModelIndex &index, int role) const {
     if (!index.isValid() || index.row() < 0 || index.row() >= int(rows_.size()))
         return {};
@@ -390,6 +432,8 @@ QVariant SubtitleGridModel::data(const QModelIndex &index, int role) const {
             return QString::fromStdString(line->Effect.get());
         case TextRole:
             return QString::fromStdString(line->Text.get());
+        case DisplayTextRole:
+            return formatDisplayText(QString::fromStdString(line->Text.get()));
         case CommentRole:
             return line->Comment;
         case SelectedRole:
@@ -409,6 +453,7 @@ QHash<int, QByteArray> SubtitleGridModel::roleNames() const {
         { ActorRole, "actor" },
         { EffectRole, "effect" },
         { TextRole, "text" },
+        { DisplayTextRole, "displayText" },
         { CommentRole, "isComment" },
         { SelectedRole, "isSelected" },
     };
@@ -439,6 +484,24 @@ int SubtitleGridModel::appendDefaultLine() {
     auto *line = new AssDialogue;
     line->End = defaultDurationMs();
     file_->Events.push_back(*line);
+    commitRowChange(QStringLiteral("Insert line"), line);
+    return selectLine(line);
+}
+
+int SubtitleGridModel::insertAtVideoTime(bool after) {
+    auto *current = getActiveDialogue();
+    if (!file_ || !current || !video_vm_ || !video_vm_->hasVideo() || video_vm_->currentFrame() < 0)
+        return -1;
+
+    const int start = std::max(0, video_vm_->timeAtFrameMs(video_vm_->currentFrame(), false));
+    auto *line = new AssDialogue;
+    line->Style = current->Style;
+    line->Start = start;
+    line->End = start + defaultDurationMs();
+    auto pos = file_->Events.iterator_to(*current);
+    if (after)
+        ++pos;
+    file_->Events.insert(pos, *line);
     commitRowChange(QStringLiteral("Insert line"), line);
     return selectLine(line);
 }
@@ -846,22 +909,26 @@ void SubtitleGridModel::makeTimesContinuous(bool changeStart) {
         aegisub_qt::commit(file_, "Make times continuous", AssFile::COMMIT_DIAG_TIME);
 }
 
-void SubtitleGridModel::sortAllLines(int field) {
-    if (!file_ || lineCount() < 2)
-        return;
-
-    AssFile::CompFunc compare;
+namespace {
+AssFile::CompFunc lineComparator(int field) {
     switch (field) {
-        case SortStart: compare = AssFile::CompStart; break;
-        case SortEnd: compare = AssFile::CompEnd; break;
-        case SortStyle: compare = AssFile::CompStyle; break;
-        case SortActor: compare = AssFile::CompActor; break;
-        case SortEffect: compare = AssFile::CompEffect; break;
-        case SortLayer: compare = AssFile::CompLayer; break;
-        case SortText: compare = AssFile::CompText; break;
-        case SortStrippedText: compare = AssFile::CompTextStripped; break;
-        default: return;
+        case SubtitleGridModel::SortStart: return AssFile::CompStart;
+        case SubtitleGridModel::SortEnd: return AssFile::CompEnd;
+        case SubtitleGridModel::SortStyle: return AssFile::CompStyle;
+        case SubtitleGridModel::SortActor: return AssFile::CompActor;
+        case SubtitleGridModel::SortEffect: return AssFile::CompEffect;
+        case SubtitleGridModel::SortLayer: return AssFile::CompLayer;
+        case SubtitleGridModel::SortText: return AssFile::CompText;
+        case SubtitleGridModel::SortStrippedText: return AssFile::CompTextStripped;
+        default: return nullptr;
     }
+}
+} // namespace
+
+void SubtitleGridModel::sortAllLines(int field) {
+    const auto compare = lineComparator(field);
+    if (!file_ || !compare || lineCount() < 2)
+        return;
     if (std::is_sorted(rows_.begin(), rows_.end(), [compare](auto *left, auto *right) {
             return compare(*left, *right);
         }))
@@ -869,6 +936,67 @@ void SubtitleGridModel::sortAllLines(int field) {
 
     file_->Sort(compare);
     aegisub_qt::commit(file_, "Sort lines", AssFile::COMMIT_ORDER);
+}
+
+void SubtitleGridModel::sortSelectedLines(int field) {
+    const auto compare = lineComparator(field);
+    if (!file_ || !compare || selectionCount() < 2)
+        return;
+
+    std::vector<AssDialogue *> order;
+    QHash<AssDialogue *, size_t> positions;
+    for (const int row : sortedSelectedRows()) {
+        auto *line = dialogueAt(row);
+        positions.insert(line, order.size());
+        order.push_back(line);
+    }
+    auto sorted = order;
+    std::stable_sort(sorted.begin(), sorted.end(), [compare](auto *left, auto *right) {
+        return compare(*left, *right);
+    });
+    if (sorted == order)
+        return;
+
+    // Swap only selected slots in the intrusive list, including across gaps.
+    for (size_t i = 0; i < order.size(); ++i) {
+        auto *wanted = sorted[i];
+        if (wanted == order[i])
+            continue;
+        const size_t from = positions.value(wanted);
+        order[i]->swap_nodes(*wanted);
+        positions[order[i]] = from;
+        positions[wanted] = i;
+        std::swap(order[i], order[from]);
+    }
+    aegisub_qt::commit(file_, "Sort selected lines", AssFile::COMMIT_ORDER);
+}
+
+void SubtitleGridModel::swapSelectedLines() {
+    if (!file_ || selectionCount() != 2)
+        return;
+    const auto selected = sortedSelectedRows();
+    dialogueAt(selected.front())->swap_nodes(*dialogueAt(selected.back()));
+    aegisub_qt::commit(file_, "Swap lines", AssFile::COMMIT_ORDER);
+}
+
+void SubtitleGridModel::shiftSelectionToCurrentFrame() {
+    if (!file_ || !video_vm_ || !video_vm_->hasVideo() || video_vm_->currentFrame() < 0)
+        return;
+    const auto selected = sortedSelectedRows();
+    if (selected.isEmpty())
+        return;
+
+    // Use the first selected row in script order, not the last focused row.
+    const int target = agi::Time(video_vm_->currentTimeMs());
+    const int delta = target - int(dialogueAt(selected.front())->Start);
+    if (delta == 0)
+        return;
+    for (const int row : selected) {
+        auto *line = dialogueAt(row);
+        line->Start = int(line->Start) + delta;
+        line->End = int(line->End) + delta;
+    }
+    aegisub_qt::commit(file_, "Shift to current frame", AssFile::COMMIT_DIAG_TIME);
 }
 
 void SubtitleGridModel::moveSelectedRows(int delta) {

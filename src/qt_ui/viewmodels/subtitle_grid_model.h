@@ -35,6 +35,8 @@ class SubtitleGridModel final : public QAbstractListModel {
     Q_PROPERTY(int selectionCount READ selectionCount NOTIFY selectionCountChanged)
     /// Number of dialogue lines (for the status bar).
     Q_PROPERTY(int lineCount READ lineCount NOTIFY lineCountChanged)
+    Q_PROPERTY(int tagDisplayMode READ tagDisplayMode WRITE setTagDisplayMode NOTIFY tagDisplayModeChanged)
+    Q_PROPERTY(QString hideOverridesChar READ hideOverridesChar WRITE setHideOverridesChar NOTIFY hideOverridesCharChanged)
 
 public:
     enum Roles {
@@ -48,8 +50,12 @@ public:
         TextRole,
         CommentRole,
         SelectedRole,
+        DisplayTextRole,
     };
     Q_ENUM(Roles)
+
+    enum TagDisplayMode { ShowTags, SimplifyTags, HideTags };
+    Q_ENUM(TagDisplayMode)
 
     enum SortField {
         SortStart, SortEnd, SortStyle, SortActor, SortEffect, SortLayer, SortText,
@@ -70,6 +76,10 @@ public:
     int selectionCount() const;
 
     int lineCount() const;
+    int tagDisplayMode() const { return tag_display_mode_; }
+    void setTagDisplayMode(int mode);
+    QString hideOverridesChar() const { return hide_overrides_char_; }
+    void setHideOverridesChar(const QString &marker);
 
     /// The AssDialogue behind the selected row, or nullptr.
     AssDialogue *getActiveDialogue();
@@ -104,6 +114,10 @@ public:
     Q_INVOKABLE void snapToVideo(bool start);
     Q_INVOKABLE void makeTimesContinuous(bool changeStart);
     Q_INVOKABLE void sortAllLines(int field);
+    Q_INVOKABLE void sortSelectedLines(int field);
+    Q_INVOKABLE void swapSelectedLines();
+    Q_INVOKABLE void shiftSelectionToCurrentFrame();
+    Q_INVOKABLE int insertAtVideoTime(bool after);
     /// Move one row up (negative) or down (positive).
     Q_INVOKABLE void moveSelectedRows(int delta);
 
@@ -138,8 +152,14 @@ signals:
     void activeRowChanged();
     void selectionCountChanged();
     void lineCountChanged();
+    void tagDisplayModeChanged();
+    void hideOverridesCharChanged();
 
 private:
+    void notifyDisplayTextChanged();
+    QString formatDisplayText(const QString &text) const;
+    int tag_display_mode_ = ShowTags;
+    QString hide_overrides_char_ = QStringLiteral("\u2600");
     void rebuildRows();
     int indexOf(const AssDialogue *line) const;
     /// Rebuild the row index but keep the selected row (clamped on shrink).

@@ -125,7 +125,10 @@ int AudioWaveformItem::snappedMs(int ms, Qt::KeyboardModifiers modifiers) const 
         return ms;
 
     const double zoom = std::max(1.0, vm_->zoomPxPerSec());
-    const int tolerance_ms = int(std::ceil(kGrabRadiusPx * 1000.0 / zoom));
+    const int radius = vm_->snapDistancePx();
+    if (radius == 0)
+        return ms;
+    const int tolerance_ms = int(std::floor(radius * 1000.0 / zoom));
     const int nearest = vm_->nearestKeyframeMs(ms, tolerance_ms);
     return nearest >= 0 ? nearest : ms;
 }
@@ -482,7 +485,7 @@ void AudioWaveformItem::wheelEvent(QWheelEvent *event) {
     if (delta == 0)
         return;
 
-    if (event->modifiers().testFlag(Qt::ControlModifier)) {
+    if (event->modifiers().testFlag(Qt::ControlModifier) != vm_->wheelDefaultsToZoom()) {
         vm_->zoomBy(delta > 0 ? 1.25 : 0.8);
     } else {
         const int step = std::max(100, visibleMs() / 8);

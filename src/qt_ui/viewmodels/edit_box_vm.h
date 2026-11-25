@@ -40,6 +40,7 @@ public:
                      QObject *parent = nullptr);
 
     QString text() const;
+    Q_INVOKABLE int longestVisibleLineLength(const QString &value) const;
     void setText(const QString &value);
 
     QString startTime() const;

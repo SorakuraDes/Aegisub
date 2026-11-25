@@ -1,6 +1,8 @@
 // Must come before any Qt header: agi::signal (via ass_file.h) has members
 // named `slots`, and Qt defines `signals`/`slots` as macros.
 #include "../../ass_file.h"
+#include "../../options.h"
+#include <libaegisub/character_count.h>
 
 #include "edit_box_vm.h"
 
@@ -251,6 +253,13 @@ void EditBoxViewModel::handleEnterKey(bool shift) {
 // ---------------------------------------------------------------------------
 // Body text
 // ---------------------------------------------------------------------------
+
+int EditBoxViewModel::longestVisibleLineLength(const QString &value) const {
+    int flags = agi::IGNORE_BLOCKS;
+    if (config::opt && OPT_GET("Subtitle/Character Counter/Ignore Whitespace")->GetBool()) flags |= agi::IGNORE_WHITESPACE;
+    if (config::opt && OPT_GET("Subtitle/Character Counter/Ignore Punctuation")->GetBool()) flags |= agi::IGNORE_PUNCTUATION;
+    return int(agi::MaxLineLength(toStdString(value), flags));
+}
 
 QString EditBoxViewModel::text() const {
     const AssDialogue *line = active();
