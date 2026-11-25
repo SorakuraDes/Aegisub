@@ -2,6 +2,8 @@
 
 #include "media_track_info.h"
 
+#include <libaegisub/fs_fwd.h>
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -26,11 +28,11 @@ using TrackSelector =
 void SetTrackSelector(TrackSelector selector);
 void ClearTrackSelector();
 
-/// Enumerate the tracks of `utf8_path` of the requested kind without writing an
+/// Enumerate the tracks of `path` of the requested kind without writing an
 /// index file. Returns false and fills `error` when the container cannot be
 /// opened; an existing container without tracks of that kind returns true with
 /// an empty list.
-bool ProbeTracks(const std::string &utf8_path, MediaKind kind,
+bool ProbeTracks(agi::fs::path const &path, MediaKind kind,
                  std::vector<MediaTrackInfo> *tracks, std::string *error);
 
 } // namespace aegisub_qt

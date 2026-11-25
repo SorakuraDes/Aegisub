@@ -17,6 +17,7 @@
 #include "audio_vm.h"
 
 #include "../video_bridge.h"
+#include "../qt_path.h"
 
 #include <libaegisub/ass/time.h>
 #include <libaegisub/exception.h>
@@ -184,9 +185,9 @@ bool VideoViewModel::openLocalPathImpl(const QString &path, int trackId, bool in
     // ask QML for a track if there is more than one and the caller is an
     // interactive menu action, then open with the chosen ffms2 track id. The
     // provider therefore never has to ask the user itself (no wx dialog).
+    const auto native_path = aegisub_qt::ToNativePath(info.absoluteFilePath());
     std::string probe_error;
-    const auto tracks = aegisub_qt::VideoBridge::ProbeVideoTracks(
-        path.toUtf8().toStdString(), &probe_error);
+    const auto tracks = aegisub_qt::VideoBridge::ProbeVideoTracks(native_path, &probe_error);
     if (tracks.empty() && !probe_error.empty()) {
         setError(QString::fromStdString(probe_error));
         return false;
@@ -206,7 +207,7 @@ bool VideoViewModel::openLocalPathImpl(const QString &path, int trackId, bool in
     pending_track_path_.clear();
 
     std::string error;
-    if (!bridge_->OpenFile(path.toUtf8().toStdString(), &error, chosen_track)) {
+    if (!bridge_->OpenFile(native_path, &error, chosen_track)) {
         setError(QString::fromStdString(error));
         return false;
     }

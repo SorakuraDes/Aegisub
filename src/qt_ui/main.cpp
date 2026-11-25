@@ -2,6 +2,8 @@
 // named `slots`, and Qt defines `signals`/`slots` as macros.
 #include "../ass_file.h"
 
+#include <libaegisub/exception.h>
+
 #include "aegisub_core.h"
 #include "audio_waveform_item.h"
 #include "video_bridge.h"
@@ -14,6 +16,8 @@
 #include "viewmodels/document_vm.h"
 #include "viewmodels/edit_box_vm.h"
 #include "viewmodels/preferences_vm.h"
+#include "viewmodels/theme_vm.h"
+#include "ass_syntax_highlighter.h"
 #include "viewmodels/properties_vm.h"
 #include "viewmodels/search_vm.h"
 #include "viewmodels/shift_times_vm.h"
@@ -32,6 +36,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QtQml>
+
+#include <exception>
 
 namespace {
 
@@ -215,6 +221,7 @@ int main(int argc, char *argv[]) {
     AppInfoViewModel appInfoVM;
     AboutViewModel aboutVM(&i18n);
     PreferencesViewModel preferencesVM;
+    ThemeViewModel themeVM;
     PropertiesViewModel propertiesVM(&script, &i18n, &undoManager);
     // The grid model is constructed before the edit box so that it rebuilds its
     // row index first when UndoManager::restored fires (see undo_manager.h).
@@ -260,12 +267,14 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<VideoViewportItem>("Aegisub", 1, 0, "VideoViewport");
     qmlRegisterType<VisualOverlayItem>("Aegisub", 1, 0, "VisualOverlay");
     qmlRegisterType<AudioWaveformItem>("Aegisub", 1, 0, "AudioWaveform");
+    qmlRegisterType<AssSyntaxHighlighter>("Aegisub", 1, 0, "AssSyntaxHighlighter");
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("i18n", &i18n);
     engine.rootContext()->setContextProperty("appInfo", &appInfoVM);
     engine.rootContext()->setContextProperty("aboutVM", &aboutVM);
     engine.rootContext()->setContextProperty("preferencesVM", &preferencesVM);
+    engine.rootContext()->setContextProperty("themeVM", &themeVM);
     engine.rootContext()->setContextProperty("propertiesVM", &propertiesVM);
     engine.rootContext()->setContextProperty("gridModel", &gridModel);
     engine.rootContext()->setContextProperty("editBoxVM", &editBoxVM);
@@ -320,15 +329,36 @@ int main(int argc, char *argv[]) {
 
     // Open the command-line media only after QML is up: VideoPanel would miss
     // the frameReady() signal emitted during a pre-engine open and show a black
-    // viewport until the next frame change.
+    // viewport until the next frame change. Exceptions must not escape these
+    // calls: they run before the event loop and an uncaught C++ exception would
+    // call std::terminate -> abort (see docs/qt6-frontend.md pitfall 56).
     if (!startup_video.isEmpty() && QFileInfo(startup_video).isFile()) {
-        if (!videoVM.openLocalPath(startup_video))
-            qWarning() << "Failed to open video" << startup_video << ":" << videoVM.lastError();
+        try {
+            if (!videoVM.openLocalPath(startup_video))
+                qWarning() << "Failed to open video" << startup_video << ":" << videoVM.lastError();
+        } catch (agi::Exception const &ex) {
+            // agi::Exception does not derive from std::exception.
+            qWarning() << "Failed to open video" << startup_video << ":"
+                       << QString::fromStdString(ex.GetMessage());
+        } catch (std::exception const &ex) {
+            qWarning() << "Failed to open video" << startup_video << ":" << ex.what();
+        } catch (...) {
+            qWarning() << "Failed to open video" << startup_video << ": unknown error";
+        }
     }
 
     if (!startup_audio.isEmpty() && QFileInfo(startup_audio).isFile()) {
-        if (!audioVM.openLocalPath(startup_audio))
-            qWarning() << "Failed to open audio" << startup_audio << ":" << audioVM.lastError();
+        try {
+            if (!audioVM.openLocalPath(startup_audio))
+                qWarning() << "Failed to open audio" << startup_audio << ":" << audioVM.lastError();
+        } catch (agi::Exception const &ex) {
+            qWarning() << "Failed to open audio" << startup_audio << ":"
+                       << QString::fromStdString(ex.GetMessage());
+        } catch (std::exception const &ex) {
+            qWarning() << "Failed to open audio" << startup_audio << ":" << ex.what();
+        } catch (...) {
+            qWarning() << "Failed to open audio" << startup_audio << ": unknown error";
+        }
     }
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [] {

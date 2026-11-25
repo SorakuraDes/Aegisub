@@ -30,12 +30,15 @@ class UndoManager;
 class AudioViewModel final : public QObject {
     Q_OBJECT
 
+    Q_PROPERTY(bool spectrumMode READ spectrumMode WRITE setSpectrumMode NOTIFY spectrumModeChanged)
     Q_PROPERTY(bool hasAudio READ hasAudio NOTIFY audioChanged)
     Q_PROPERTY(QString audioName READ audioName NOTIFY audioChanged)
     Q_PROPERTY(int durationMs READ durationMs NOTIFY audioChanged)
     Q_PROPERTY(int sampleRate READ sampleRate NOTIFY audioChanged)
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playingChanged)
     Q_PROPERTY(int playbackTimeMs READ playbackTimeMs NOTIFY playbackTimeChanged)
+    Q_PROPERTY(bool followPlayhead READ followPlayhead WRITE setFollowPlayhead
+                   NOTIFY followPlayheadChanged)
     Q_PROPERTY(double zoomPxPerSec READ zoomPxPerSec NOTIFY viewChanged)
     Q_PROPERTY(int viewStartMs READ viewStartMs NOTIFY viewChanged)
     Q_PROPERTY(int activeStartMs READ activeStartMs NOTIFY activeTimesChanged)
@@ -58,12 +61,18 @@ public:
                    QObject *parent = nullptr);
     ~AudioViewModel() override;
 
+    bool spectrumMode() const { return spectrum_mode_; }
+    void setSpectrumMode(bool enabled);
+    int64_t decodedSamples() const { return bridge_.DecodedSamples(); }
+    void computeSpectrum(int64_t start, int64_t end, int width, std::vector<float> &levels) const;
     bool hasAudio() const;
     QString audioName() const;
     int durationMs() const;
     int sampleRate() const;
     bool isPlaying() const;
     int playbackTimeMs() const;
+    bool followPlayhead() const { return follow_playhead_; }
+    void setFollowPlayhead(bool enabled);
     double zoomPxPerSec() const;
     int viewStartMs() const;
     int activeStartMs() const;
@@ -118,8 +127,9 @@ public:
 
     /// The waveform widget reports its width so the view model can clamp and
     /// centre the view without knowing the QML layout.
-    Q_INVOKABLE void setViewportWidthPx(int width);
-    Q_INVOKABLE int viewportWidthPx() const;
+    Q_INVOKABLE void setViewportWidthPx(double width);
+    Q_INVOKABLE double viewportWidthPx() const;
+    int visibleMs() const;
 
     /// Peak extraction for AudioWaveformItem (not exposed to QML).
     void computePeaks(int64_t start_sample, int64_t end_sample, int width,
@@ -131,6 +141,7 @@ public:
     Q_INVOKABLE void handleDocumentReload();
 
 signals:
+    void spectrumModeChanged();
     void audioChanged();
     /// "Play Line" (selection playback) started. The video view model listens to
     /// this so an independent line playback always wins over a video playback
@@ -138,6 +149,7 @@ signals:
     void linePlaybackStarted();
     void playingChanged();
     void playbackTimeChanged();
+    void followPlayheadChanged();
     void viewChanged();
     void activeTimesChanged();
     void volumeChanged();
@@ -160,8 +172,8 @@ private:
     void onFileCommitted(int type, const AssDialogue *single_line);
     void onRestored();
     void onActiveRowChanged();
-    int visibleMs() const;
     void clampView();
+    bool advanceViewForPlayhead();
 
     AssFile *file_;
     SubtitleGridModel *grid_model_;
@@ -175,13 +187,17 @@ private:
     QString pending_track_path_;
     int source_track_count_ = 0;
     std::vector<int> keyframe_times_ms_;
+    bool spectrum_mode_ = false;
     bool snap_to_keyframes_ = true;
     int active_start_ms_ = 0;
     int active_end_ms_ = 0;
     int view_start_ms_ = 0;
     double zoom_px_per_sec_ = 100.0;
-    int viewport_width_px_ = 800;
+    double viewport_width_px_ = 0.0;
     int playback_time_ms_ = 0;
+    int playback_start_ms_ = 0;
+    int playback_end_ms_ = 0;
+    bool follow_playhead_ = true;
     bool playing_ = false;
     /// True while playSelection() runs (Play Line), false for playFrom().
     bool playing_selection_ = false;

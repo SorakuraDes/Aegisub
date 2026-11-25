@@ -6,34 +6,15 @@ import Aegisub 1.0
 Item {
     id: root
 
-    component TransportButton: Button {
-        flat: true
-        font.pixelSize: 11
-        implicitHeight: 24
-        padding: 0
-        leftInset: 0
-        rightInset: 0
-        topInset: 0
-        bottomInset: 0
+    component TransportButton: CompactIconButton {
+        implicitWidth: 28
+        implicitHeight: 28
+        Layout.alignment: Qt.AlignVCenter
     }
 
-    component ToolButton: TransportButton {
-        id: button
+    component VideoTool: CompactIconButton {
         implicitWidth: 32
-        implicitHeight: 29
-        contentItem: Text {
-            text: button.text
-            font: button.font
-            color: button.checked ? "#4fc3f7" : "#eeeeee"
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: 3
-            color: button.down ? "#38464d" : button.checked ? "#263a45"
-                   : button.hovered ? "#303030" : "transparent"
-            border.color: button.activeFocus ? "#4fc3f7" : "transparent"
-        }
+        implicitHeight: themeVM.controlHeight
     }
 
     ColumnLayout {
@@ -49,42 +30,44 @@ Item {
                 Layout.preferredWidth: 36
                 Layout.fillHeight: true
                 visible: videoVM.hasVideo
-                color: "#1b1b1b"
+                color: themeVM.surfaceContainer
 
                 Column {
                     anchors.horizontalCenter: parent.horizontalCenter
                     y: 3
                     spacing: 2
                     ButtonGroup { id: toolGroup }
-                    ToolButton {
-                        text: "Std"
+                    VideoTool {
+                        text: i18n.t("Standard tool")
+                        icon.source: "qrc:/icons/near_me.svg"
                         objectName: "visualStandardButton"
                         checkable: true
                         ButtonGroup.group: toolGroup
                         checked: visualToolsVM.activeTool === 0
                         onClicked: visualToolsVM.activeTool = 0
                     }
-                    ToolButton {
-                        text: "Pos"
+                    VideoTool {
+                        text: i18n.t("Move subtitles")
+                        icon.source: "qrc:/icons/open_with.svg"
                         objectName: "visualPositionButton"
                         checkable: true
                         ButtonGroup.group: toolGroup
                         checked: visualToolsVM.activeTool === 1
                         onClicked: visualToolsVM.activeTool = 1
                     }
-                    ToolButton {
-                        text: "Clip"
+                    VideoTool {
+                        text: i18n.t("Rectangular clip")
+                        icon.source: "qrc:/icons/crop.svg"
                         objectName: "visualClipButton"
                         checkable: true
                         ButtonGroup.group: toolGroup
                         checked: visualToolsVM.activeTool === 2
                         onClicked: visualToolsVM.activeTool = 2
                     }
-                    ToolButton {
-                        text: "\u00d7"
+                    VideoTool {
+                        text: i18n.t("Clear rectangular clip")
+                        icon.source: "qrc:/icons/close.svg"
                         objectName: "visualClearClipButton"
-                        Accessible.name: "Clear rectangular clip"
-                        font.pixelSize: 17
                         visible: visualToolsVM.activeTool === 2 && visualToolsVM.hasRectClip
                         onClicked: visualToolsVM.clearRectClip()
                     }
@@ -93,6 +76,8 @@ Item {
 
             VideoViewport {
                 id: videoSurface
+                Accessible.role: Accessible.Graphic
+                Accessible.name: i18n.t("Video preview")
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
@@ -104,13 +89,16 @@ Item {
 
                 Label {
                     anchors.left: parent.left
+                    anchors.right: parent.right
                     anchors.top: parent.top
                     anchors.margins: 6
+                    elide: Text.ElideMiddle
                     text: videoVM.videoName
-                    color: "#d0d0d0"
+                    // Contrast the glyph and its outline over arbitrary footage.
+                    color: themeVM.onSurface
                     font.pixelSize: 10
                     style: Text.Outline
-                    styleColor: "#000000"
+                    styleColor: themeVM.surface
                     visible: videoVM.hasVideo
                 }
             }
@@ -118,40 +106,43 @@ Item {
 
         Rectangle {
             id: transport
-            readonly property bool narrow: width < 500
-            readonly property bool compactFrame: width < 390
+            readonly property bool compactFrame: width < 430
             Layout.fillWidth: true
-            Layout.preferredHeight: narrow ? 46 : 34
-            color: "#1b1b1b"
+            Layout.minimumHeight: 36
+            Layout.preferredHeight: 36
+            Layout.maximumHeight: 36
+            color: themeVM.surfaceContainer
 
             RowLayout {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 4
-                height: 26
-                spacing: 3
+                anchors.fill: parent
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.topMargin: 0
+                anchors.bottomMargin: 0
+                spacing: 2
 
                 TransportButton {
                     text: videoVM.isPlaying ? i18n.t("Pause") : i18n.t("Play")
-                    implicitWidth: Math.max(41, contentItem.implicitWidth + 6)
+                    icon.source: videoVM.isPlaying ? "qrc:/icons/pause.svg" : "qrc:/icons/play_arrow.svg"
                     onClicked: videoVM.togglePlay()
                 }
                 TransportButton {
-                    text: "\u25C0"
-                    implicitWidth: 23
+                    text: i18n.t("Previous frame")
+                    icon.source: "qrc:/icons/skip_previous.svg"
                     onClicked: videoVM.stepFrame(-1)
                 }
                 TransportButton {
-                    text: "\u25B6"
-                    implicitWidth: 23
+                    text: i18n.t("Next frame")
+                    icon.source: "qrc:/icons/skip_next.svg"
                     onClicked: videoVM.stepFrame(1)
                 }
 
                 Slider {
                     id: seekSlider
+                    Layout.alignment: Qt.AlignVCenter
                     Layout.fillWidth: true
                     Layout.minimumWidth: 32
+                    Layout.maximumHeight: 28
                     leftPadding: 4
                     rightPadding: 4
                     from: 0
@@ -168,55 +159,52 @@ Item {
                 }
 
                 Label {
+                    Layout.alignment: Qt.AlignVCenter
                     text: videoVM.currentFrameIsKeyframe ? "KF" : ""
                     Layout.preferredWidth: 16
                     font.pixelSize: 10
                     font.bold: true
-                    color: "#b388ff"
+                    color: themeVM.kfLine
                     horizontalAlignment: Text.AlignHCenter
                 }
 
                 Label {
+                    Layout.alignment: Qt.AlignVCenter
                     readonly property string frameText: "Frame " + (videoVM.currentFrame + 1) + " / " + videoVM.frameCount
                     text: frameText + (transport.compactFrame ? "\n" : "   ") + videoVM.currentTimeText
                     Accessible.name: frameText + "   " + videoVM.currentTimeText
                     font.pixelSize: 11
                     font.family: "Consolas"
-                    color: "#e0e0e0"
+                    color: themeVM.onSurface
                     horizontalAlignment: Text.AlignRight
                 }
 
                 Label {
-                    visible: !transport.narrow
-                    text: visible ? visualToolsVM.hoverCoordText : ""
+                    Layout.alignment: Qt.AlignVCenter
+                    visible: transport.width >= 500
+                    text: visualToolsVM.hoverCoordText
                     Layout.preferredWidth: 74
                     elide: Text.ElideRight
                     font.pixelSize: 10
                     font.family: "Consolas"
-                    color: "#4fc3f7"
+                    color: themeVM.primary
                     horizontalAlignment: Text.AlignRight
                 }
 
                 CheckBox {
+                    Layout.alignment: Qt.AlignVCenter
                     text: i18n.t("Sync")
                     checked: videoVM.autoSeekToActiveLine
                     font.pixelSize: 11
-                    implicitHeight: 24
+                    implicitHeight: 28
                     padding: 0
+                    topPadding: 0
+                    bottomPadding: 0
+                    topInset: 0
+                    bottomInset: 0
                     spacing: 1
                     onToggled: videoVM.autoSeekToActiveLine = checked
                 }
-            }
-
-            Label {
-                anchors.bottom: parent.bottom
-                anchors.right: parent.right
-                anchors.margins: 4
-                visible: transport.narrow
-                text: visible ? visualToolsVM.hoverCoordText : ""
-                font.pixelSize: 10
-                font.family: "Consolas"
-                color: "#4fc3f7"
             }
         }
     }
@@ -235,7 +223,8 @@ Item {
         anchors.rightMargin: 6
         visible: videoVM.lastError.length > 0
         text: videoVM.lastError
-        color: "#ff9f9f"
+        color: themeVM.danger
+        background: Rectangle { color: themeVM.surfaceContainer }
         font.pixelSize: 11
         wrapMode: Text.WordWrap
         horizontalAlignment: Text.AlignHCenter

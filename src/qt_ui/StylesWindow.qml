@@ -10,12 +10,19 @@ Window {
     minimumWidth: 720
     minimumHeight: 500
     title: i18n.t("Styles Manager")
-    color: "#1e1e1e"
+    color: themeVM.surface
 
-    Material.theme: Material.Dark
-    Material.accent: Material.Blue
+    Material.theme: themeVM.darkMode ? Material.Dark : Material.Light
+    Material.accent: themeVM.primary
+    Material.background: themeVM.surfaceContainer
+    Material.foreground: themeVM.onSurface
 
-    readonly property int fieldHeight: 30
+    readonly property int fieldHeight: themeVM.controlHeight
+    readonly property var alignmentNames: [
+        i18n.t("Top left"), i18n.t("Top center"), i18n.t("Top right"),
+        i18n.t("Middle left"), i18n.t("Middle center"), i18n.t("Middle right"),
+        i18n.t("Bottom left"), i18n.t("Bottom center"), i18n.t("Bottom right")
+    ]
 
     // True while loadStyleForm() is assigning fields. Without it the controls'
     // initial values (SpinBox starts at `from`) fire their change handlers and
@@ -70,14 +77,14 @@ Window {
 
         // ---- Left: style list -------------------------------------------------
         ColumnLayout {
-            Layout.preferredWidth: 210
+            Layout.preferredWidth: 176
             Layout.fillHeight: true
             spacing: 6
 
             Label {
                 text: i18n.t("Styles")
                 font.pixelSize: 11
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             ListView {
@@ -93,17 +100,15 @@ Window {
                     width: styleList.width
                     height: 28
                     color: index === stylesVM.currentIndex
-                           ? Qt.rgba(Material.color(Material.Blue).r,
-                                     Material.color(Material.Blue).g,
-                                     Material.color(Material.Blue).b, 0.35)
-                           : (index % 2 === 0 ? "#1f1f1f" : "#242424")
+                           ? themeVM.primaryContainer
+                           : (index % 2 === 0 ? themeVM.surfaceContainerLow : themeVM.rowAlt)
 
                     Label {
                         anchors.fill: parent
                         anchors.leftMargin: 8
                         text: modelData
                         font.pixelSize: 12
-                        color: "#dddddd"
+                        color: index === stylesVM.currentIndex ? themeVM.onPrimaryContainer : themeVM.onSurface
                         verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
                     }
@@ -119,37 +124,20 @@ Window {
                 Layout.fillWidth: true
                 spacing: 6
 
-                // Material's default vertical padding does not fit in a 30px
-                // button, which makes the labels disappear.
-                Button {
-                    text: i18n.t("New")
-                    implicitHeight: 30
-                    topPadding: 0
-                    bottomPadding: 0
-                    leftPadding: 8
-                    rightPadding: 8
-                    font.pixelSize: 12
+                CompactIconButton {
+                    text: i18n.t("New style")
+                    icon.source: "qrc:/icons/add.svg"
                     onClicked: stylesVM.newStyle()
                 }
-                Button {
-                    text: i18n.t("Copy")
-                    implicitHeight: 30
-                    topPadding: 0
-                    bottomPadding: 0
-                    leftPadding: 8
-                    rightPadding: 8
-                    font.pixelSize: 12
+                CompactIconButton {
+                    text: i18n.t("Copy style")
+                    icon.source: "qrc:/icons/content_copy.svg"
                     enabled: stylesVM.currentIndex >= 0
                     onClicked: stylesVM.copyStyle(stylesVM.currentIndex)
                 }
-                Button {
-                    text: i18n.t("Delete")
-                    implicitHeight: 30
-                    topPadding: 0
-                    bottomPadding: 0
-                    leftPadding: 8
-                    rightPadding: 8
-                    font.pixelSize: 12
+                CompactIconButton {
+                    text: i18n.t("Delete style")
+                    icon.source: "qrc:/icons/delete.svg"
                     enabled: stylesVM.currentIndex >= 0
                     onClicked: stylesVM.deleteStyle(stylesVM.currentIndex)
                 }
@@ -159,7 +147,7 @@ Window {
                 Layout.fillWidth: true
                 text: stylesVM.lastError
                 font.pixelSize: 11
-                color: "#ff9a9a"
+                color: themeVM.danger
                 wrapMode: Text.WordWrap
                 visible: text.length > 0
             }
@@ -188,7 +176,7 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Label { text: i18n.t("Name"); Layout.preferredWidth: 74; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Name"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         TextField {
                             id: nameField
                             Layout.fillWidth: true
@@ -202,7 +190,7 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Label { text: i18n.t("Font"); Layout.preferredWidth: 74; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Font"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         TextField {
                             id: fontField
                             Layout.fillWidth: true
@@ -210,7 +198,7 @@ Window {
                             font.pixelSize: 12
                             onEditingFinished: stylesVM.fontName = text
                         }
-                        Label { text: i18n.t("Size"); font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Size"); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: fontSizeSpin
                             from: 1
@@ -230,40 +218,32 @@ Window {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        CheckBox {
+                        CompactIconButton {
                             id: boldCheck
                             text: i18n.t("Bold")
-                            font.pixelSize: 12
-                            implicitHeight: stylesWindow.fieldHeight
-                            topPadding: 0
-                            bottomPadding: 0
+                            icon.source: "qrc:/icons/format_bold.svg"
+                            checkable: true
                             onToggled: if (!stylesWindow.loadingForm && stylesVM.bold !== checked) stylesVM.bold = checked
                         }
-                        CheckBox {
+                        CompactIconButton {
                             id: italicCheck
                             text: i18n.t("Italic")
-                            font.pixelSize: 12
-                            implicitHeight: stylesWindow.fieldHeight
-                            topPadding: 0
-                            bottomPadding: 0
+                            icon.source: "qrc:/icons/format_italic.svg"
+                            checkable: true
                             onToggled: if (!stylesWindow.loadingForm && stylesVM.italic !== checked) stylesVM.italic = checked
                         }
-                        CheckBox {
+                        CompactIconButton {
                             id: underlineCheck
                             text: i18n.t("Underline")
-                            font.pixelSize: 12
-                            implicitHeight: stylesWindow.fieldHeight
-                            topPadding: 0
-                            bottomPadding: 0
+                            icon.source: "qrc:/icons/format_underlined.svg"
+                            checkable: true
                             onToggled: if (!stylesWindow.loadingForm && stylesVM.underline !== checked) stylesVM.underline = checked
                         }
-                        CheckBox {
+                        CompactIconButton {
                             id: strikeoutCheck
                             text: i18n.t("Strikeout")
-                            font.pixelSize: 12
-                            implicitHeight: stylesWindow.fieldHeight
-                            topPadding: 0
-                            bottomPadding: 0
+                            icon.source: "qrc:/icons/format_strikethrough.svg"
+                            checkable: true
                             onToggled: if (!stylesWindow.loadingForm && stylesVM.strikeout !== checked) stylesVM.strikeout = checked
                         }
                         Item { Layout.fillWidth: true }
@@ -274,12 +254,12 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Label { text: i18n.t("Primary"); Layout.preferredWidth: 74; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Primary"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         Rectangle {
                             Layout.preferredWidth: 36
                             Layout.preferredHeight: 24
                             radius: 3
-                            border.color: "#555555"
+                            border.color: themeVM.outline
                             color: stylesWindow.safeColor(primaryHex.text)
                         }
                         TextField {
@@ -290,7 +270,7 @@ Window {
                             font.pixelSize: 12
                             onEditingFinished: stylesVM.primaryColor = text
                         }
-                        Label { text: "A"; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: "A"; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: primaryAlphaSpin
                             from: 0
@@ -311,12 +291,12 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Label { text: i18n.t("Secondary"); Layout.preferredWidth: 74; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Secondary"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         Rectangle {
                             Layout.preferredWidth: 36
                             Layout.preferredHeight: 24
                             radius: 3
-                            border.color: "#555555"
+                            border.color: themeVM.outline
                             color: stylesWindow.safeColor(secondaryHex.text)
                         }
                         TextField {
@@ -327,7 +307,7 @@ Window {
                             font.pixelSize: 12
                             onEditingFinished: stylesVM.secondaryColor = text
                         }
-                        Label { text: "A"; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: "A"; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: secondaryAlphaSpin
                             from: 0
@@ -348,12 +328,12 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Label { text: i18n.t("Outline"); Layout.preferredWidth: 74; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Outline"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         Rectangle {
                             Layout.preferredWidth: 36
                             Layout.preferredHeight: 24
                             radius: 3
-                            border.color: "#555555"
+                            border.color: themeVM.outline
                             color: stylesWindow.safeColor(outlineHex.text)
                         }
                         TextField {
@@ -364,7 +344,7 @@ Window {
                             font.pixelSize: 12
                             onEditingFinished: stylesVM.outlineColor = text
                         }
-                        Label { text: "A"; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: "A"; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: outlineAlphaSpin
                             from: 0
@@ -385,12 +365,12 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Label { text: i18n.t("Shadow"); Layout.preferredWidth: 74; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Shadow"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         Rectangle {
                             Layout.preferredWidth: 36
                             Layout.preferredHeight: 24
                             radius: 3
-                            border.color: "#555555"
+                            border.color: themeVM.outline
                             color: stylesWindow.safeColor(shadowHex.text)
                         }
                         TextField {
@@ -401,7 +381,7 @@ Window {
                             font.pixelSize: 12
                             onEditingFinished: stylesVM.shadowColor = text
                         }
-                        Label { text: "A"; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: "A"; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: shadowAlphaSpin
                             from: 0
@@ -426,7 +406,7 @@ Window {
                         ColumnLayout {
                             spacing: 4
 
-                            Label { text: i18n.t("Alignment"); font.pixelSize: 11; color: "#9a9a9a" }
+                            Label { text: i18n.t("Alignment"); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
 
                             GridLayout {
                                 columns: 3
@@ -434,32 +414,46 @@ Window {
                                 columnSpacing: 2
 
                                 Repeater {
-                                    id: alignmentRepeater
-                                    property int alignment: stylesVM.alignment
-                                    model: 9
+                                    // ASS uses numeric keypad positions: 7 is top left, 1 is bottom left.
+                                    model: [7, 8, 9, 4, 5, 6, 1, 2, 3]
 
-                                    delegate: Rectangle {
+                                    delegate: Button {
+                                        id: alignmentButton
+                                        required property int index
+                                        required property int modelData
+                                        readonly property bool selected: stylesVM.alignment === modelData
+                                        readonly property string positionName: stylesWindow.alignmentNames[index]
                                         implicitWidth: 34
-                                        implicitHeight: 26
-                                        radius: 3
-                                        border.color: "#4a4a4a"
-                                        color: stylesVM.alignment === index + 1
-                                               ? Qt.rgba(Material.color(Material.Blue).r,
-                                                         Material.color(Material.Blue).g,
-                                                         Material.color(Material.Blue).b, 0.85)
-                                               : "#2a2a2a"
-
-                                        Label {
-                                            anchors.centerIn: parent
-                                            text: index + 1
-                                            font.pixelSize: 11
-                                            color: "#e6e6e6"
+                                        implicitHeight: 28
+                                        padding: 0
+                                        topInset: 0
+                                        bottomInset: 0
+                                        text: String(modelData)
+                                        hoverEnabled: true
+                                        Accessible.name: positionName
+                                        Accessible.checkable: true
+                                        Accessible.checked: selected
+                                        ToolTip {
+                                            visible: alignmentButton.hovered || alignmentButton.visualFocus
+                                            text: alignmentButton.positionName
+                                            delay: 400
                                         }
-
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            onClicked: stylesVM.alignment = index + 1
+                                        contentItem: Label {
+                                            text: alignmentButton.text
+                                            font.pixelSize: 12
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                            color: alignmentButton.selected ? themeVM.onPrimaryContainer : themeVM.onSurface
                                         }
+                                        background: Rectangle {
+                                            radius: themeVM.radiusSmall
+                                            border.width: alignmentButton.visualFocus ? 2 : 1
+                                            border.color: alignmentButton.visualFocus ? themeVM.onSurface : themeVM.outline
+                                            color: alignmentButton.selected ? themeVM.primaryContainer
+                                                   : (alignmentButton.down || alignmentButton.hovered
+                                                      ? themeVM.surfaceContainerHigh : themeVM.surfaceContainer)
+                                        }
+                                        onClicked: stylesVM.alignment = modelData
                                     }
                                 }
                             }
@@ -470,7 +464,7 @@ Window {
 
                             RowLayout {
                                 spacing: 6
-                                Label { text: i18n.t("Border"); font.pixelSize: 11; color: "#9a9a9a" }
+                                Label { text: i18n.t("Border"); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                                 ComboBox {
                                     id: borderCombo
                                     implicitWidth: 170
@@ -483,7 +477,7 @@ Window {
 
                             RowLayout {
                                 spacing: 6
-                                Label { text: i18n.t("Outline w."); font.pixelSize: 11; color: "#9a9a9a" }
+                                Label { text: i18n.t("Outline w."); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                                 SpinBox {
                                     id: outlineSpin
                                     from: 0
@@ -497,7 +491,7 @@ Window {
                                             stylesVM.outlineWidth = value
                                     }
                                 }
-                                Label { text: i18n.t("Shadow d."); font.pixelSize: 11; color: "#9a9a9a" }
+                                Label { text: i18n.t("Shadow d."); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                                 SpinBox {
                                     id: shadowSpin
                                     from: 0
@@ -522,9 +516,9 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Label { text: i18n.t("Margins"); Layout.preferredWidth: 74; font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("Margins"); Layout.preferredWidth: 74; font.pixelSize: 11; color: themeVM.onSurfaceVariant }
 
-                        Label { text: i18n.t("L"); font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("L"); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: marginLSpin
                             from: 0
@@ -538,7 +532,7 @@ Window {
                                     stylesVM.marginL = value
                             }
                         }
-                        Label { text: i18n.t("R"); font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("R"); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: marginRSpin
                             from: 0
@@ -552,7 +546,7 @@ Window {
                                     stylesVM.marginR = value
                             }
                         }
-                        Label { text: i18n.t("V"); font.pixelSize: 11; color: "#9a9a9a" }
+                        Label { text: i18n.t("V"); font.pixelSize: 11; color: themeVM.onSurfaceVariant }
                         SpinBox {
                             id: marginVSpin
                             from: 0
@@ -575,12 +569,17 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 68
-                radius: 4
-                color: "#141414"
-                border.color: "#333333"
+                radius: themeVM.radiusSmall
+                color: themeVM.surfaceContainerLow
+                border.color: themeVM.outlineVariant
+                clip: true
 
                 Text {
-                    anchors.centerIn: parent
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
                     text: i18n.t("Preview Text")
                     font.family: stylesVM.fontName
                     font.pixelSize: Math.max(10, Math.min(48, stylesVM.fontSize / 2))

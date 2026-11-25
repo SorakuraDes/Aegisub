@@ -4,7 +4,7 @@
 // For the blank default line added when a .srt has no cues at all.
 #include "../../ass_dialogue.h"
 
-#include <boost/filesystem/path.hpp>
+#include "../qt_path.h"
 
 #include "document_vm.h"
 #include "subtitle_grid_model.h"
@@ -24,14 +24,6 @@
 #include <string>
 
 namespace {
-
-agi::fs::path toPath(const QString &path) {
-#ifdef _WIN32
-    return agi::fs::path(path.toStdWString());
-#else
-    return agi::fs::path(path.toStdString());
-#endif
-}
 
 /// SubRip import/export is selected purely by the file name suffix; matching is
 /// case-insensitive so `Movie.SRT` opens in the SRT reader too.
@@ -146,7 +138,7 @@ bool DocumentViewModel::loadFromPath(const QString &path) {
     }
 
     try {
-        const agi::fs::path native = toPath(path);
+        const agi::fs::path native = aegisub_qt::ToNativePath(path);
 
         // TextFileReader treats an empty encoding as a literal charset name
         // (not auto-detect), so detect it the same way the wx frontend does
@@ -219,11 +211,11 @@ bool DocumentViewModel::saveToPath(const QString &path) {
             // splits/merges overlapping and identical lines itself; only plain
             // UTF-8 output is supported (no encoding picker yet).
             SRTSubtitleFormat format;
-            format.WriteFile(file_, toPath(path), agi::vfr::Framerate(), "UTF-8");
+            format.WriteFile(file_, aegisub_qt::ToNativePath(path), agi::vfr::Framerate(), "UTF-8");
         }
         else {
             AssSubtitleFormat format;
-            format.WriteFile(file_, toPath(path), agi::vfr::Framerate(), "UTF-8");
+            format.WriteFile(file_, aegisub_qt::ToNativePath(path), agi::vfr::Framerate(), "UTF-8");
         }
         setFilePath(path);
         // The undo position at save time becomes the "clean" reference, so the

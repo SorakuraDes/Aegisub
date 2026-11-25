@@ -15,19 +15,11 @@ namespace {
 constexpr int kRulerHeight = 20;
 constexpr double kGrabRadiusPx = 6.0;
 
-QColor kBackground("#101214");
-QColor kRulerBackground("#171c20");
-QColor kTickMajor("#3a464c");
-QColor kTickText("#7c8a90");
-QColor kWaveOutside("#6d8b84");
-QColor kWaveInside("#4fc3f7");
-QColor kSelection(79, 195, 247, 36);
-QColor kStartLine("#ff5252");
-QColor kEndLine("#448aff");
-QColor kPlayhead("#ffffff");
-/// Video keyframes: soft purple, drawn above the waveform but below the red/blue
-/// timing lines so they guide snapping without stealing attention.
-QColor kKeyframeLine(179, 136, 255, 140);
+QColor blend(const QColor &a, const QColor &b, float t) {
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t,
+                            a.greenF() + (b.greenF() - a.greenF()) * t,
+                            a.blueF() + (b.blueF() - a.blueF()) * t);
+}
 
 QString formatTick(double milliseconds, double step_ms) {
     const int ms = int(std::max(0.0, milliseconds));
@@ -71,26 +63,24 @@ void AudioWaveformItem::setViewModel(QObject *view_model) {
     vm_ = vm;
 
     if (vm_) {
-        // Any viewport change invalidates the cached peaks; selection/playhead
-        // changes only need a repaint.
+        // Only audio or viewport changes can require new peaks/spectrum.
+        // Ordinary playhead ticks just repaint the overlay.
         connect(vm_, &AudioViewModel::audioChanged, this, [this] {
             invalidatePeaks();
-            if (vm_ && width() > 0)
-                vm_->setViewportWidthPx(int(width()));
             update();
         });
         connect(vm_, &AudioViewModel::viewChanged, this, [this] {
-            invalidatePeaks();
+            polish();
             update();
         });
+        connect(vm_, &AudioViewModel::spectrumModeChanged, this, [this] { polish(); update(); });
         connect(vm_, &AudioViewModel::activeTimesChanged, this, [this] { update(); });
         connect(vm_, &AudioViewModel::playbackTimeChanged, this, [this] { update(); });
         connect(vm_, &AudioViewModel::playingChanged, this, [this] { update(); });
         connect(vm_, &AudioViewModel::keyframeTimesChanged, this, [this] { update(); });
         connect(vm_, &AudioViewModel::snapToKeyframesChanged, this, [this] { update(); });
 
-        if (width() > 0)
-            vm_->setViewportWidthPx(int(width()));
+        vm_->setViewportWidthPx(width());
     }
 
     invalidatePeaks();
@@ -101,9 +91,13 @@ void AudioWaveformItem::setViewModel(QObject *view_model) {
 void AudioWaveformItem::geometryChange(const QRectF &new_geometry,
                                        const QRectF &old_geometry) {
     QQuickPaintedItem::geometryChange(new_geometry, old_geometry);
-    if (vm_ && new_geometry.width() > 0)
-        vm_->setViewportWidthPx(int(new_geometry.width()));
-    invalidatePeaks();
+    if (new_geometry.width() != old_geometry.width()) {
+        if (vm_)
+            vm_->setViewportWidthPx(new_geometry.width());
+        polish();
+    } else if (old_geometry.height() <= kRulerHeight && new_geometry.height() > kRulerHeight) {
+        polish();
+    }
 }
 
 double AudioWaveformItem::xToMs(double x) const {
@@ -121,10 +115,7 @@ double AudioWaveformItem::msToX(double ms) const {
 }
 
 int AudioWaveformItem::visibleMs() const {
-    if (!vm_)
-        return 1000;
-    const double zoom = std::max(1.0, vm_->zoomPxPerSec());
-    return std::max(1000, int(width() * 1000.0 / zoom));
+    return vm_ ? vm_->visibleMs() : 1000;
 }
 
 int AudioWaveformItem::snappedMs(int ms, Qt::KeyboardModifiers modifiers) const {
@@ -139,7 +130,82 @@ int AudioWaveformItem::snappedMs(int ms, Qt::KeyboardModifiers modifiers) const 
     return nearest >= 0 ? nearest : ms;
 }
 
-void AudioWaveformItem::invalidatePeaks() { peaks_valid_ = false; }
+void AudioWaveformItem::setColors(const QVariantMap &colors) {
+    if (colors_ == colors) return;
+    colors_ = colors;
+    recolorSpectrum();
+    update();
+    emit colorsChanged();
+}
+
+void AudioWaveformItem::recolorSpectrum() {
+    if (spectrum_.isNull()) return;
+    const auto low = colors_.value("background").value<QColor>();
+    const auto mid = colors_.value("primary").value<QColor>();
+    const auto high = colors_.value("foreground").value<QColor>();
+    QList<QRgb> table;
+    table.reserve(256);
+    for (int i = 0; i < 256; ++i)
+        table.append((i < 160 ? blend(low, mid, i / 160.f)
+                              : blend(mid, high, (i - 160) / 95.f)).rgb());
+    spectrum_.setColorTable(table);
+}
+
+void AudioWaveformItem::invalidatePeaks() {
+    peaks_valid_ = false;
+    spectrum_ = {};
+    polish();
+}
+
+void AudioWaveformItem::updatePolish() {
+    if (!vm_ || !vm_->hasAudio()) return;
+    if (vm_->spectrumMode()) refreshSpectrum();
+    else refreshPeaks();
+    update();
+}
+
+void AudioWaveformItem::refreshSpectrum() {
+    if (width() < 1 || height() <= kRulerHeight) return;
+    constexpr int bins = aegisub_qt::AudioBridge::spectrumBins;
+    const int columns = std::clamp(int(std::ceil(width())), 1, 2048);
+    const int start = vm_->viewStartMs();
+    const auto end = vm_->msToSample(start + visibleMs());
+    const auto first = vm_->msToSample(start);
+    const auto needed = std::min<int64_t>(end + bins, vm_->msToSample(vm_->durationMs()));
+    const auto decoded = std::min(vm_->decodedSamples(), needed);
+    if (decoded < needed && !retry_pending_) {
+        retry_pending_ = true;
+        QTimer::singleShot(250, this, [this] { retry_pending_ = false; polish(); });
+    }
+    if (spectrum_.width() == columns && first == spectrum_start_ && end == spectrum_end_
+        && decoded == spectrum_decoded_) return;
+    spectrum_start_ = first;
+    spectrum_end_ = end;
+    spectrum_decoded_ = decoded;
+    std::vector<float> levels;
+    vm_->computeSpectrum(first, end, columns, levels);
+    if (levels.size() != size_t(columns) * bins) {
+        spectrum_ = {};
+        return;
+    }
+    spectrum_ = QImage(columns, bins, QImage::Format_Indexed8);
+    if (spectrum_.isNull()) return;
+    // A logarithmic vertical scale gives speech and the 440 Hz test tone room.
+    for (int y = 0; y < bins; ++y) {
+        const auto binAt = [bins](double row) {
+            return std::pow(double(bins), 1.0 - row / (bins - 1)) - 1.0;
+        };
+        const int low = std::clamp(int(std::lround(binAt(y + 0.5))), 0, bins - 1);
+        const int high = std::clamp(int(std::lround(binAt(y - 0.5))), low, bins - 1);
+        auto row = spectrum_.scanLine(y);
+        for (int x = 0; x < columns; ++x) {
+            auto base = levels.data() + size_t(x) * bins;
+            row[x] = uchar(std::lround(*std::max_element(base + low, base + high + 1) * 255.0));
+        }
+    }
+    recolorSpectrum();
+
+}
 
 void AudioWaveformItem::refreshPeaks() {
     if (!vm_ || !vm_->hasAudio()) {
@@ -170,12 +236,20 @@ void AudioWaveformItem::refreshPeaks() {
 void AudioWaveformItem::paint(QPainter *painter) {
     const double w = width();
     const double h = height();
+    const auto color = [this](const char *key) { return colors_.value(QLatin1String(key)).value<QColor>(); };
+    const auto kBackground = color("background"), kRulerBackground = color("surface");
+    const auto kTickMajor = color("outline"), kTickText = color("muted");
+    const auto kWaveOutside = color("secondary"), kWaveInside = color("primary");
+    auto kSelection = kWaveInside;
+    kSelection.setAlpha(40);
+    const auto kStartLine = color("start"), kEndLine = color("end");
+    const auto kPlayhead = color("foreground"), kKeyframeLine = color("keyframe");
     painter->fillRect(QRectF(0, 0, w, h), kBackground);
     if (w <= 0 || h <= 0)
         return;
 
     if (!vm_ || !vm_->hasAudio()) {
-        painter->setPen(QColor("#8a8a8a"));
+        painter->setPen(kTickText);
         painter->drawText(QRectF(0, 0, w, h), Qt::AlignCenter, "No audio loaded");
         return;
     }
@@ -223,8 +297,8 @@ void AudioWaveformItem::paint(QPainter *painter) {
                           Qt::AlignLeft | Qt::AlignVCenter, formatTick(tick, step_ms));
     }
 
-    // ---- Waveform --------------------------------------------------------
-    refreshPeaks();
+    // Waveform and spectrogram share the same time coordinates and overlays.
+    const bool show_spectrum = vm_->spectrumMode();
 
     const double wave_top = kRulerHeight;
     const double wave_height = h - kRulerHeight;
@@ -234,15 +308,19 @@ void AudioWaveformItem::paint(QPainter *painter) {
     const double start_x = msToX(start_ms);
     const double end_x = msToX(end_ms);
 
+    if (show_spectrum && !spectrum_.isNull())
+        painter->drawImage(QRectF(0, wave_top, w, wave_height), spectrum_);
     painter->fillRect(QRectF(std::clamp(start_x, 0.0, w), wave_top,
                              std::clamp(end_x, 0.0, w) - std::clamp(start_x, 0.0, w),
                              wave_height),
                       kSelection);
 
-    painter->setPen(QColor("#232b30"));
-    painter->drawLine(QPointF(0, center_y), QPointF(w, center_y));
+    if (!show_spectrum) {
+        painter->setPen(kTickMajor);
+        painter->drawLine(QPointF(0, center_y), QPointF(w, center_y));
+    }
 
-    if (peaks_valid_) {
+    if (!show_spectrum && peaks_valid_) {
         const int columns = std::min<int>(peaks_width_, int(peak_min_.size()));
         QPen outside_pen(kWaveOutside);
         outside_pen.setWidthF(1.0);

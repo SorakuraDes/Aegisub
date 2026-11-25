@@ -4,45 +4,41 @@ import QtQuick.Layouts
 
 Window {
     id: propertiesWindow
-    width: 560
-    height: 480
-    minimumWidth: 440
-    minimumHeight: 380
+    width: 440
+    height: 310
+    minimumWidth: Math.max(380, propertiesForm.implicitWidth + 2 * propertiesForm.anchors.margins)
+    minimumHeight: propertiesForm.implicitHeight + 2 * propertiesForm.anchors.margins
     title: i18n.t("Properties")
-    color: "#1e1e1e"
+    color: themeVM.surface
 
-    Material.theme: Material.Dark
-    Material.accent: Material.Blue
+    Material.theme: themeVM.darkMode ? Material.Dark : Material.Light
+    Material.accent: themeVM.primary
+    Material.background: themeVM.surfaceContainer
+    Material.foreground: themeVM.onSurface
+
+    Shortcut {
+        sequence: StandardKey.Cancel
+        context: Qt.WindowShortcut
+        onActivated: propertiesWindow.close()
+    }
 
     ColumnLayout {
+        id: propertiesForm
         anchors.fill: parent
-        anchors.margins: 24
-        spacing: 16
-
-        Label {
-            Layout.fillWidth: true
-            text: i18n.t("Properties")
-            font.pixelSize: 22
-            font.bold: true
-            color: "white"
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: "#3a3a3a"
-        }
+        anchors.margins: 14
+        spacing: 8
 
         Label {
             text: i18n.t("Title")
             font.pixelSize: 13
-            color: "#cccccc"
+            color: themeVM.onSurfaceVariant
         }
 
         TextField {
             id: titleField
             Layout.fillWidth: true
-            placeholderText: i18n.t("Title")
+            implicitHeight: themeVM.controlHeight
+            Accessible.name: i18n.t("Title")
             text: propertiesVM.scriptTitle
             onTextEdited: propertiesVM.scriptTitle = text
         }
@@ -50,7 +46,7 @@ Window {
         Label {
             text: i18n.t("Resolution")
             font.pixelSize: 13
-            color: "#cccccc"
+            color: themeVM.onSurfaceVariant
         }
 
         RowLayout {
@@ -60,6 +56,8 @@ Window {
             SpinBox {
                 id: resX
                 Layout.fillWidth: true
+                implicitHeight: themeVM.controlHeight
+                Accessible.name: i18n.t("PlayResX")
                 from: 0
                 to: 16384
                 editable: true
@@ -70,12 +68,14 @@ Window {
             Label {
                 text: "x"
                 font.pixelSize: 14
-                color: "#aaaaaa"
+                color: themeVM.onSurfaceVariant
             }
 
             SpinBox {
                 id: resY
                 Layout.fillWidth: true
+                implicitHeight: themeVM.controlHeight
+                Accessible.name: i18n.t("PlayResY")
                 from: 0
                 to: 16384
                 editable: true
@@ -89,7 +89,7 @@ Window {
             text: i18n.t("PlayResX") + " = " + propertiesVM.playResX
                   + ", " + i18n.t("PlayResY") + " = " + propertiesVM.playResY
             font.pixelSize: 11
-            color: "#888888"
+            color: themeVM.onSurfaceVariant
         }
 
         Item { Layout.fillHeight: true }
@@ -106,7 +106,7 @@ Window {
             Item { Layout.fillWidth: true }
 
             Button {
-                text: "Close"
+                text: i18n.t("Close")
                 onClicked: propertiesWindow.close()
             }
         }

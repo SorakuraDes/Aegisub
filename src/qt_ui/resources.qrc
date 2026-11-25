@@ -11,7 +11,34 @@
     <file>ShiftTimesDialog.qml</file>
     <file>TrackPickerDialog.qml</file>
     <file>ShortcutMenuItem.qml</file>
+    <file>CompactIconButton.qml</file>
+    <file>CompactIconMenuItem.qml</file>
     <file>VideoPanel.qml</file>
     <file>AudioPanel.qml</file>
+    <file>icons/add.svg</file>
+    <file>icons/close.svg</file>
+    <file>icons/content_copy.svg</file>
+    <file>icons/crop.svg</file>
+    <file>icons/delete.svg</file>
+    <file>icons/equalizer.svg</file>
+    <file>icons/graphic_eq.svg</file>
+    <file>icons/follow_playhead.svg</file>
+    <file>icons/format_bold.svg</file>
+    <file>icons/format_italic.svg</file>
+    <file>icons/format_underlined.svg</file>
+    <file>icons/format_strikethrough.svg</file>
+    <file>icons/near_me.svg</file>
+    <file>icons/open_with.svg</file>
+    <file>icons/pause.svg</file>
+    <file>icons/play_arrow.svg</file>
+    <file>icons/search.svg</file>
+    <file>icons/settings.svg</file>
+    <file>icons/skip_next.svg</file>
+    <file>icons/skip_previous.svg</file>
+    <file>icons/stop.svg</file>
+    <file>icons/zoom_in.svg</file>
+    <file>icons/zoom_out.svg</file>
+    <file>icons/LICENSE</file>
+    <file>icons/README.md</file>
   </qresource>
 </RCC>

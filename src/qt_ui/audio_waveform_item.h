@@ -5,6 +5,8 @@
 #include <libaegisub/signal.h>
 
 #include <QQuickPaintedItem>
+#include <QImage>
+#include <QVariantMap>
 
 #include <vector>
 
@@ -20,7 +22,11 @@ class AudioWaveformItem : public QQuickPaintedItem {
     Q_OBJECT
     Q_PROPERTY(QObject *viewModel READ viewModel WRITE setViewModel NOTIFY viewModelChanged)
 
+    Q_PROPERTY(QVariantMap colors READ colors WRITE setColors NOTIFY colorsChanged)
+
 public:
+    QVariantMap colors() const { return colors_; }
+    void setColors(const QVariantMap &colors);
     explicit AudioWaveformItem(QQuickItem *parent = nullptr);
 
     QObject *viewModel() const;
@@ -31,6 +37,7 @@ public:
 
 signals:
     void viewModelChanged();
+    void colorsChanged();
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -47,7 +54,16 @@ private:
     /// Snap `ms` to the nearest video keyframe when snapping is enabled and
     /// Shift is not held (tolerance: 6 px converted to ms at the current zoom).
     int snappedMs(int ms, Qt::KeyboardModifiers modifiers) const;
+    void updatePolish() override;
     void refreshPeaks();
+    void refreshSpectrum();
+    void recolorSpectrum();
+    QVariantMap colors_;
+    QImage spectrum_;
+    qint64 spectrum_start_ = -1;
+    qint64 spectrum_end_ = -1;
+    qint64 spectrum_decoded_ = -1;
+    bool retry_pending_ = false;
     void invalidatePeaks();
 
     AudioViewModel *vm_ = nullptr;

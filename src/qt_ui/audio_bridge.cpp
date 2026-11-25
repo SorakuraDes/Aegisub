@@ -17,16 +17,15 @@
 #include <libaegisub/path.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <complex>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 // Factories defined in the original sources; no headers declare them.
 std::unique_ptr<agi::AudioProvider> CreateFFmpegSourceAudioProvider(
@@ -36,21 +35,6 @@ std::unique_ptr<AudioPlayer> CreateXAudio2Player(agi::AudioProvider *provider,
 
 namespace aegisub_qt {
 namespace {
-
-/// UTF-8 -> native path (boost::filesystem::path on Windows is UTF-16).
-agi::fs::path pathFromUtf8(std::string const &utf8) {
-#ifdef _WIN32
-    if (utf8.empty())
-        return agi::fs::path();
-    const int length = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
-    std::wstring wide(size_t(length > 0 ? length : 0), L'\0');
-    if (length > 0)
-        MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), wide.data(), length);
-    return agi::fs::path(wide);
-#else
-    return agi::fs::path(utf8);
-#endif
-}
 
 /// FFmpegSourceProvider::GetCacheFilename() creates the ffms2 cache directory
 /// through agi::fs::CreateDirectory (which can fail-fast in this environment,
@@ -173,7 +157,7 @@ AudioBridge::AudioBridge()
 
 AudioBridge::~AudioBridge() = default;
 
-bool AudioBridge::OpenFile(std::string const &utf8_path, std::string *error,
+bool AudioBridge::OpenFile(agi::fs::path const &path, std::string *error,
                            int preferredTrack) {
     Close();
     ensureCacheDirectory();
@@ -182,7 +166,7 @@ bool AudioBridge::OpenFile(std::string const &utf8_path, std::string *error,
         // Multi-track files choose the track through the injected selector, so
         // no wx dialog is ever created from the Qt process.
         TrackSelectorGuard selector(preferredTrack);
-        auto provider = CreateFFmpegSourceAudioProvider(pathFromUtf8(utf8_path),
+        auto provider = CreateFFmpegSourceAudioProvider(path,
                                                         impl_->runner.get());
         if (!provider) {
             if (error)
@@ -252,10 +236,10 @@ void AudioBridge::Close() {
     impl_->status = "No audio output";
 }
 
-std::vector<MediaTrackInfo> AudioBridge::ProbeAudioTracks(std::string const &utf8_path,
+std::vector<MediaTrackInfo> AudioBridge::ProbeAudioTracks(agi::fs::path const &path,
                                                           std::string *error) {
     std::vector<MediaTrackInfo> tracks;
-    ProbeTracks(utf8_path, MediaKind::Audio, &tracks, error);
+    ProbeTracks(path, MediaKind::Audio, &tracks, error);
     return tracks;
 }
 
@@ -337,6 +321,69 @@ void AudioBridge::ComputePeaks(int64_t start_sample, int64_t end_sample, int wid
         // the affected columns stay at zero.
         LOG_D("qt/audio") << "Peak extraction failed";
     }
+}
+
+int64_t AudioBridge::DecodedSamples() const {
+    return impl_->provider ? impl_->provider->GetDecodedSamples() : 0;
+}
+
+void AudioBridge::ComputeSpectrum(int64_t start, int64_t end, int width,
+                                  std::vector<float> &levels) const try {
+    levels.clear();
+    constexpr int n = 2 * (spectrumBins - 1);
+    constexpr double tau = 6.28318530717958647692;
+    struct Plan {
+        std::array<int, n> reversed{};
+        std::array<float, n> window{};
+        std::array<std::complex<float>, n / 2> roots{};
+        Plan() {
+            for (int i = 0; i < n; ++i) {
+                reversed[i] = (reversed[i >> 1] >> 1) | ((i & 1) * (n / 2));
+                window[i] = float(0.5 - 0.5 * std::cos(tau * i / n));
+            }
+            for (int i = 0; i < n / 2; ++i)
+                roots[i] = std::polar(1.0f, float(-tau * i / n));
+        }
+    };
+    static const Plan plan;
+    levels.assign(size_t(std::max(0, width)) * spectrumBins, 0.0f);
+    if (!impl_->provider || width <= 0 || end <= start) return;
+    const auto available = DecodedSamples();
+    std::array<int16_t, n> pcm;
+    std::array<std::complex<float>, n> frame;
+    for (int x = 0; x < width; ++x) {
+        const int64_t center = start + int64_t((x + 0.5) * (double(end) - start) / width);
+        if (center < 0 || center >= available) continue;
+        const auto left = center - n / 2;
+        const auto first = std::max<int64_t>(0, left);
+        const auto last = std::min<int64_t>(available, left + n);
+        pcm.fill(0);
+        impl_->provider->GetInt16MonoAudio(pcm.data() + (first - left), first, last - first);
+        for (int i = 0; i < n; ++i)
+            frame[plan.reversed[i]] = float(pcm[i]) * plan.window[i] / 32768.0f;
+        for (int span = 2; span <= n; span *= 2) {
+            for (int base = 0; base < n; base += span) {
+                for (int j = 0; j < span / 2; ++j) {
+                    auto &a = frame[base + j];
+                    auto &b = frame[base + j + span / 2];
+                    const auto odd = b * plan.roots[j * (n / span)];
+                    b = a - odd;
+                    a += odd;
+                }
+            }
+        }
+        for (int k = 0; k < spectrumBins; ++k) {
+            const float gain = (k == 0 || k == n / 2) ? 2.0f / n : 4.0f / n;
+            const float db = 20.0f * std::log10(std::max(0.0001f, std::abs(frame[k]) * gain));
+            levels[size_t(x) * spectrumBins + k] = std::clamp((db + 80.0f) / 80.0f, 0.0f, 1.0f);
+        }
+    }
+} catch (agi::Exception const &) {
+    std::fputs("[qt/audio] Spectrum extraction failed (Aegisub exception)\n", stderr);
+} catch (std::exception const &e) {
+    std::fprintf(stderr, "[qt/audio] Spectrum extraction failed: %s\n", e.what());
+} catch (...) {
+    std::fputs("[qt/audio] Spectrum extraction failed (unknown exception)\n", stderr);
 }
 
 bool AudioBridge::PlayRange(int64_t start_sample, int64_t end_sample, std::string *error) {

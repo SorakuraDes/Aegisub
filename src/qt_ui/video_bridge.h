@@ -8,6 +8,8 @@
 
 #include "media_track_info.h"
 
+#include <libaegisub/fs_fwd.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,14 +41,14 @@ public:
     /// Enumerate the video tracks of a container without opening/decoding it.
     /// An empty list means "no video track"; `error` is only set when the file
     /// itself cannot be opened.
-    static std::vector<MediaTrackInfo> ProbeVideoTracks(std::string const &utf8_path,
+    static std::vector<MediaTrackInfo> ProbeVideoTracks(agi::fs::path const &path,
                                                        std::string *error);
 
     /// Open a real video file through FFmpegSource (wrapped in the frame
     /// cache). `preferredTrack` is an ffms2 track id from ProbeVideoTracks();
     /// -1 means "auto-select the first video track" and never shows a dialog.
     /// Returns false and fills `error` on failure.
-    bool OpenFile(std::string const &utf8_path, std::string *error, int preferredTrack = -1);
+    bool OpenFile(agi::fs::path const &path, std::string *error, int preferredTrack = -1);
     /// Open the dummy (checkerboard) video without touching the filesystem.
     bool OpenDummy(int width, int height, double fps, int frame_count, std::string *error);
     void Close();

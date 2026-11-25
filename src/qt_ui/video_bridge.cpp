@@ -21,31 +21,6 @@
 #include <exception>
 #include <mutex>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
-namespace {
-
-/// agi::fs::path takes a native (narrow) string on Windows, which would mangle
-/// non-ASCII video paths; build it from UTF-16 instead.
-agi::fs::path pathFromUtf8(std::string const &utf8) {
-#ifdef _WIN32
-    if (utf8.empty())
-        return agi::fs::path();
-
-    const int length = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
-    std::wstring wide(size_t(length > 0 ? length : 0), L'\0');
-    if (length > 0)
-        MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), wide.data(), length);
-    return agi::fs::path(wide);
-#else
-    return agi::fs::path(utf8);
-#endif
-}
-
-} // namespace
-
 // The original factories live in the global namespace and have no headers.
 std::unique_ptr<VideoProvider> CreateFFmpegSourceVideoProvider(
     agi::fs::path const &path, std::string const &colormatrix, agi::BackgroundRunner *br);
@@ -138,7 +113,7 @@ void VideoBridge::Initialize() {
     });
 }
 
-bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error,
+bool VideoBridge::OpenFile(agi::fs::path const &path, std::string *error,
                            int preferredTrack) {
     Close();
     Initialize();
@@ -150,7 +125,7 @@ bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error,
         // frontend when it has no previous provider to inherit one from.
         // The guard makes multi-track files pick a track without a wx dialog.
         TrackSelectorGuard selector(preferredTrack);
-        auto provider = CreateFFmpegSourceVideoProvider(pathFromUtf8(utf8_path), {}, impl_->runner.get());
+        auto provider = CreateFFmpegSourceVideoProvider(path, {}, impl_->runner.get());
         if (!provider) {
             if (error)
                 *error = "Failed to create the FFmpegSource video provider";
@@ -179,10 +154,10 @@ bool VideoBridge::OpenFile(std::string const &utf8_path, std::string *error,
 #endif
 }
 
-std::vector<MediaTrackInfo> VideoBridge::ProbeVideoTracks(std::string const &utf8_path,
+std::vector<MediaTrackInfo> VideoBridge::ProbeVideoTracks(agi::fs::path const &path,
                                                           std::string *error) {
     std::vector<MediaTrackInfo> tracks;
-    ProbeTracks(utf8_path, MediaKind::Video, &tracks, error);
+    ProbeTracks(path, MediaKind::Video, &tracks, error);
     return tracks;
 }
 
@@ -276,12 +251,27 @@ int VideoBridge::FrameAtTimeEnd(int ms) const {
 }
 
 void VideoBridge::LoadSubtitles(AssFile *file) {
-    Initialize();
+    // libass's LoadSubtitles can throw (agi::InternalError etc.) and this call
+    // runs on the GUI thread from a ViewModel slot; an escaping exception would
+    // end in std::terminate -> abort (S14 crash class). Drop the broken
+    // provider state instead so the next commit/reload can retry.
+    try {
+        Initialize();
 
-    if (!impl_->subtitles)
-        impl_->subtitles = libass::Create(std::string(), impl_->runner.get());
+        if (!impl_->subtitles)
+            impl_->subtitles = libass::Create(std::string(), impl_->runner.get());
 
-    impl_->subtitles->LoadSubtitles(file);
+        impl_->subtitles->LoadSubtitles(file);
+    } catch (agi::Exception const &ex) {
+        LOG_E("qt/video") << "Failed to load subtitles: " << ex.GetMessage();
+        impl_->subtitles.reset();
+    } catch (std::exception const &ex) {
+        LOG_E("qt/video") << "Failed to load subtitles: " << ex.what();
+        impl_->subtitles.reset();
+    } catch (...) {
+        LOG_E("qt/video") << "Failed to load subtitles: unknown error";
+        impl_->subtitles.reset();
+    }
 }
 
 void VideoBridge::ClearSubtitles() { impl_->subtitles.reset(); }

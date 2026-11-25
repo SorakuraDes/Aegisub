@@ -9,6 +9,7 @@
 #include "audio_vm.h"
 
 #include "../commit_bridge.h"
+#include "../qt_path.h"
 
 #include <libaegisub/ass/time.h>
 #include <libaegisub/exception.h>
@@ -103,6 +104,15 @@ QString AudioViewModel::playerStatus() const {
 
 QString AudioViewModel::trackLabel() const { return track_label_; }
 
+void AudioViewModel::setFollowPlayhead(bool enabled) {
+    if (follow_playhead_ == enabled)
+        return;
+    follow_playhead_ = enabled;
+    if (advanceViewForPlayhead())
+        emit viewChanged();
+    emit followPlayheadChanged();
+}
+
 bool AudioViewModel::snapToKeyframes() const { return snap_to_keyframes_; }
 
 void AudioViewModel::setSnapToKeyframes(bool enabled) {
@@ -194,7 +204,7 @@ bool AudioViewModel::openAudioTrackPicker() {
 
     std::string probe_error;
     const auto tracks = aegisub_qt::AudioBridge::ProbeAudioTracks(
-        source_path_.toUtf8().toStdString(), &probe_error);
+        aegisub_qt::ToNativePath(source_path_), &probe_error);
     if (tracks.size() > 1) {
         pending_track_path_ = source_path_;
         emit trackSelectionRequired(pending_track_path_, QStringLiteral("audio"),
@@ -229,9 +239,9 @@ bool AudioViewModel::openLocalPathImpl(const QString &path, int trackId, bool in
     // Two-phase track selection (see VideoViewModel::openLocalPathImpl): probe
     // the container, ask QML when interactive and multi-track, then open the
     // chosen ffms2 track id. The provider never shows a wx dialog.
+    const auto native_path = aegisub_qt::ToNativePath(info.absoluteFilePath());
     std::string probe_error;
-    const auto tracks = aegisub_qt::AudioBridge::ProbeAudioTracks(
-        path.toUtf8().toStdString(), &probe_error);
+    const auto tracks = aegisub_qt::AudioBridge::ProbeAudioTracks(native_path, &probe_error);
     if (tracks.empty()) {
         if (quiet) {
             LOG_D("qt/audio") << "automatic audio load skipped:"
@@ -258,7 +268,7 @@ bool AudioViewModel::openLocalPathImpl(const QString &path, int trackId, bool in
     stopPlayback();
 
     std::string error;
-    if (!bridge_.OpenFile(path.toUtf8().toStdString(), &error, chosen_track)) {
+    if (!bridge_.OpenFile(native_path, &error, chosen_track)) {
         // AudioBridge::OpenFile() closes itself on failure.
         if (quiet) {
             LOG_D("qt/audio") << "automatic audio load skipped:" << error;
@@ -370,8 +380,12 @@ void AudioViewModel::playSelection() {
 
     playing_ = true;
     playing_selection_ = true;
+    playback_start_ms_ = start_ms;
+    playback_end_ms_ = end_ms;
     playback_time_ms_ = start_ms;
     playback_timer_.start();
+    if (advanceViewForPlayhead())
+        emit viewChanged();
     emit playingChanged();
     emit playbackTimeChanged();
     // PlayRange may have switched to the silent fallback.
@@ -398,10 +412,13 @@ bool AudioViewModel::playFrom(int start_ms) {
     }
 
     playing_ = true;
-    // Full-stream playback: the playhead is not clamped to the active line.
     playing_selection_ = false;
+    playback_start_ms_ = start;
+    playback_end_ms_ = duration;
     playback_time_ms_ = start;
     playback_timer_.start();
+    if (advanceViewForPlayhead())
+        emit viewChanged();
     emit playingChanged();
     emit playbackTimeChanged();
     emit playerStatusChanged();
@@ -499,22 +516,34 @@ QString AudioViewModel::formatTime(int ms) const {
     return QString::fromStdString(agi::Time(std::max(0, ms)).GetAssFormatted());
 }
 
-void AudioViewModel::setViewportWidthPx(int width) {
-    const int clamped = std::max(100, width);
+void AudioViewModel::setViewportWidthPx(double width) {
+    const double clamped = std::max(0.0, width);
     if (clamped == viewport_width_px_)
         return;
 
     viewport_width_px_ = clamped;
     clampView();
+    advanceViewForPlayhead();
     emit viewChanged();
 }
 
-int AudioViewModel::viewportWidthPx() const { return viewport_width_px_; }
+double AudioViewModel::viewportWidthPx() const { return viewport_width_px_; }
 
 void AudioViewModel::computePeaks(int64_t start_sample, int64_t end_sample, int width,
                                   std::vector<float> &out_min,
                                   std::vector<float> &out_max) const {
     bridge_.ComputePeaks(start_sample, end_sample, width, out_min, out_max);
+}
+
+void AudioViewModel::setSpectrumMode(bool enabled) {
+    if (spectrum_mode_ == enabled) return;
+    spectrum_mode_ = enabled;
+    emit spectrumModeChanged();
+}
+
+void AudioViewModel::computeSpectrum(int64_t start, int64_t end, int width,
+                                     std::vector<float> &levels) const {
+    bridge_.ComputeSpectrum(start, end, width, levels);
 }
 
 int64_t AudioViewModel::msToSample(int ms) const {
@@ -571,12 +600,28 @@ void AudioViewModel::resetError() {
 
 int AudioViewModel::visibleMs() const {
     const double visible = viewport_width_px_ * 1000.0 / zoom_px_per_sec_;
-    return std::max(1000, int(visible));
+    return std::max(1, int(visible));
 }
 
 void AudioViewModel::clampView() {
     const int visible = visibleMs();
     view_start_ms_ = std::clamp(view_start_ms_, 0, std::max(0, durationMs() - visible));
+}
+
+bool AudioViewModel::advanceViewForPlayhead() {
+    if (!playing_ || !follow_playhead_ || viewport_width_px_ <= 0.0)
+        return false;
+
+    const double visible = viewport_width_px_ * 1000.0 / zoom_px_per_sec_;
+    const int offset = playback_time_ms_ - view_start_ms_;
+    if (offset >= 0 && offset <= visible * 0.85)
+        return false;
+
+    // Move in pages, landing near the left so the next ticks only repaint.
+    const int previous_start = view_start_ms_;
+    view_start_ms_ = int(playback_time_ms_ - visible * 0.15);
+    clampView();
+    return view_start_ms_ != previous_start;
 }
 
 void AudioViewModel::stopPlayback() {
@@ -603,23 +648,18 @@ void AudioViewModel::onPlaybackTick() {
     if (!playing_)
         return;
 
-    if (!bridge_.IsPlaying()) {
-        playback_time_ms_ = playing_selection_ ? active_end_ms_ : durationMs();
-        emit playbackTimeChanged();
-        stopPlayback();
-        return;
-    }
-
-    const int64_t sample = bridge_.CurrentSample();
-    int ms = sampleToMs(sample);
-    if (playing_selection_)
-        ms = std::clamp(ms, active_start_ms_, std::max(active_start_ms_, active_end_ms_));
-    else
-        ms = std::clamp(ms, 0, std::max(0, durationMs()));
+    const bool finished = !bridge_.IsPlaying();
+    const int ms = finished ? playback_end_ms_
+        : std::clamp(sampleToMs(bridge_.CurrentSample()), playback_start_ms_, playback_end_ms_);
     if (ms != playback_time_ms_) {
         playback_time_ms_ = ms;
+        if (advanceViewForPlayhead())
+            emit viewChanged();
         emit playbackTimeChanged();
     }
+
+    if (finished)
+        stopPlayback();
 }
 
 void AudioViewModel::onFileCommitted(int, const AssDialogue *) {

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import Aegisub 1.0
 
 // Edit box for the selected line: two compact toolbars (metadata + times) and
 // the body text editor. Fields are filled by loadSelection() instead of being
@@ -8,11 +9,18 @@ import QtQuick.Layouts
 // switch) can be pushed in explicitly.
 Rectangle {
     id: editBox
-    color: "#1b1b1b"
-    radius: 6
+    color: themeVM.surfaceContainerLow
+    radius: themeVM.radiusMedium
+
+    AssSyntaxHighlighter {
+        target: textArea.textDocument
+        primary: themeVM.primary
+        darkMode: themeVM.darkMode
+    }
     implicitHeight: 196
 
-    readonly property int fieldHeight: 32
+    property bool editorReady: false
+    readonly property int fieldHeight: themeVM.controlHeight
     readonly property int labelSize: 11
 
     // Rewrites the time fields from the view model. While typing, only the
@@ -85,7 +93,7 @@ Rectangle {
             Label {
                 text: i18n.t("Layer")
                 font.pixelSize: editBox.labelSize
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             SpinBox {
@@ -104,7 +112,7 @@ Rectangle {
             Label {
                 text: i18n.t("Style")
                 font.pixelSize: editBox.labelSize
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             ComboBox {
@@ -121,7 +129,7 @@ Rectangle {
             Label {
                 text: i18n.t("Actor")
                 font.pixelSize: editBox.labelSize
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             TextField {
@@ -143,7 +151,7 @@ Rectangle {
             Label {
                 text: i18n.t("Effect")
                 font.pixelSize: editBox.labelSize
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             TextField {
@@ -168,13 +176,13 @@ Rectangle {
                       ? "#" + (gridModel.activeRow + 1)
                       : i18n.t("No line selected")
                 font.pixelSize: editBox.labelSize
-                color: "#888888"
+                color: themeVM.onSurfaceVariant
             }
 
             Label {
                 text: textArea.text.length + " " + i18n.t("chars")
                 font.pixelSize: editBox.labelSize
-                color: "#888888"
+                color: themeVM.onSurfaceVariant
             }
         }
 
@@ -186,7 +194,7 @@ Rectangle {
             Label {
                 text: i18n.t("Start")
                 font.pixelSize: editBox.labelSize
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             TextField {
@@ -209,7 +217,7 @@ Rectangle {
             Label {
                 text: i18n.t("End")
                 font.pixelSize: editBox.labelSize
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             TextField {
@@ -232,7 +240,7 @@ Rectangle {
             Label {
                 text: i18n.t("Duration")
                 font.pixelSize: editBox.labelSize
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             TextField {
@@ -266,8 +274,8 @@ Rectangle {
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             background: Rectangle {
-                color: "#2a2a2a"
-                radius: 4
+                color: themeVM.surfaceContainerHighest
+                radius: themeVM.radiusSmall
             }
 
             TextArea {
@@ -286,12 +294,14 @@ Rectangle {
                 topPadding: 8
                 bottomPadding: 8
                 font.pixelSize: 14
+                textFormat: TextEdit.PlainText
+                color: themeVM.onSurface
                 wrapMode: TextArea.Wrap
                 enabled: gridModel.activeRow >= 0
                 // Lets Main.qml keep Delete/Insert/Ctrl+D away from text editing.
                 property bool isEditBoxField: true
                 placeholderText: i18n.t("No line selected")
-                onTextChanged: if (editBoxVM.text !== text) editBoxVM.text = text
+                onTextChanged: if (editBox.editorReady && editBoxVM.text !== text) editBoxVM.text = text
                 background: null
             }
         }
@@ -323,5 +333,8 @@ Rectangle {
         }
     }
 
-    Component.onCompleted: loadSelection()
+    Component.onCompleted: {
+        loadSelection()
+        editorReady = true
+    }
 }

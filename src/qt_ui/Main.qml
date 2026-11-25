@@ -8,10 +8,15 @@ ApplicationWindow {
     visible: true
     width: 1000
     height: 700
+    minimumWidth: 720
+    minimumHeight: 570
     title: documentVM.displayName + (documentVM.dirty ? " *" : "") + " - Aegisub Qt6"
 
-    Material.theme: Material.Dark
-    Material.accent: Material.Blue
+    color: themeVM.surface
+    Material.theme: themeVM.darkMode ? Material.Dark : Material.Light
+    Material.accent: themeVM.primary
+    Material.background: themeVM.surfaceContainer
+    Material.foreground: themeVM.onSurface
 
     property var aboutWindow: null
     property var preferencesWindow: null
@@ -311,13 +316,13 @@ ApplicationWindow {
         spacing: 0
 
         background: Rectangle {
-            implicitHeight: 28
-            color: "#252525"
+            implicitHeight: themeVM.menuBarHeight
+            color: themeVM.surfaceContainer
         }
 
         delegate: MenuBarItem {
             id: barItem
-            implicitHeight: 28
+            implicitHeight: themeVM.menuBarHeight
             topPadding: 0
             bottomPadding: 0
             leftPadding: 10
@@ -330,12 +335,12 @@ ApplicationWindow {
                        ? barItem.text
                        : (barItem.action ? barItem.action.text : "")).replace(/&/g, "")
                 font.pixelSize: 13
-                color: barItem.highlighted ? Material.accent : "#e6e6e6"
+                color: barItem.highlighted ? Material.accent : themeVM.onSurface
                 verticalAlignment: Text.AlignVCenter
             }
 
             background: Rectangle {
-                color: barItem.highlighted ? "#333333" : "transparent"
+                color: barItem.highlighted ? themeVM.surfaceContainerHigh : "transparent"
             }
         }
 
@@ -507,11 +512,24 @@ ApplicationWindow {
                 enabled: audioVM.hasAudio && audioVM.isPlaying
                 onTriggered: audioVM.stop()
             }
+            ShortcutMenuItem {
+                text: i18n.t("Spectrum Mode")
+                checkable: true
+                checked: audioVM.spectrumMode
+                onTriggered: audioVM.spectrumMode = checked
+            }
+            ShortcutMenuItem {
+                text: i18n.t("Follow Playhead")
+                checkable: true
+                checked: audioVM.followPlayhead
+                onTriggered: audioVM.followPlayhead = checked
+            }
         }
 
         Menu {
             title: "&Tools"
             ShortcutMenuItem {
+                icon.source: "qrc:/icons/settings.svg"
                 text: i18n.t("Preferences...")
                 onTriggered: mainWindow.openWindow("preferences")
             }
@@ -638,10 +656,10 @@ ApplicationWindow {
         // Error banner (e.g. failed open/save); closable.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 32 : 0
+            Layout.preferredHeight: visible ? themeVM.controlHeight : 0
             visible: documentVM.lastError.length > 0
-            color: "#5a1f1f"
-            radius: 4
+            color: themeVM.surfaceContainerHighest
+            radius: themeVM.radiusSmall
 
             RowLayout {
                 anchors.fill: parent
@@ -652,15 +670,14 @@ ApplicationWindow {
                 Label {
                     Layout.fillWidth: true
                     text: documentVM.lastError
-                    color: "#ffd0d0"
+                    color: themeVM.danger
                     font.pixelSize: 12
                     elide: Text.ElideRight
                 }
 
-                Button {
-                    text: "\u2715"
-                    flat: true
-                    font.pixelSize: 12
+                CompactIconButton {
+                    text: i18n.t("Dismiss error")
+                    icon.source: "qrc:/icons/close.svg"
                     onClicked: documentVM.clearError()
                 }
             }
@@ -678,7 +695,7 @@ ApplicationWindow {
 
             handle: Rectangle {
                 implicitHeight: 6
-                color: SplitHandle.hovered ? "#3a3a3a" : "#1e1e1e"
+                color: SplitHandle.hovered ? themeVM.outlineVariant : themeVM.surface
             }
 
             SplitView {
@@ -690,7 +707,7 @@ ApplicationWindow {
 
                 handle: Rectangle {
                     implicitWidth: 6
-                    color: SplitHandle.hovered ? "#3a3a3a" : "#1e1e1e"
+                    color: SplitHandle.hovered ? themeVM.outlineVariant : themeVM.surface
                 }
 
                 Loader {
@@ -730,8 +747,8 @@ ApplicationWindow {
     // ---- Compact status bar ---------------------------------------------
 
     footer: Rectangle {
-        height: 24
-        color: "#252525"
+        height: themeVM.statusBarHeight
+        color: themeVM.surfaceContainer
 
         RowLayout {
             anchors.fill: parent
@@ -745,7 +762,7 @@ ApplicationWindow {
                          ? " | " + gridModel.selectionCount + " " + i18n.t("selected")
                          : "")
                 font.pixelSize: 11
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
 
             Item { Layout.fillWidth: true }
@@ -753,7 +770,7 @@ ApplicationWindow {
             Label {
                 text: documentVM.encoding + " | Aegisub " + appInfo.version
                 font.pixelSize: 11
-                color: "#8a8a8a"
+                color: themeVM.onSurfaceVariant
             }
         }
     }

@@ -7,16 +7,19 @@ import QtQuick.Layouts
 Window {
     id: searchWindow
     width: 480
-    height: 286
-    minimumWidth: 420
-    minimumHeight: 270
+    height: 268
+    minimumWidth: Math.max(420, searchForm.implicitWidth + 2 * searchForm.anchors.margins)
+    minimumHeight: searchForm.implicitHeight + 2 * searchForm.anchors.margins
     title: i18n.t("Find & Replace")
-    color: "#1e1e1e"
+    color: themeVM.surface
 
-    Material.theme: Material.Dark
-    Material.accent: Material.Blue
+    Material.theme: themeVM.darkMode ? Material.Dark : Material.Light
+    Material.accent: themeVM.primary
+    Material.background: themeVM.surfaceContainer
+    Material.foreground: themeVM.onSurface
 
-    readonly property int fieldHeight: 32
+    readonly property int fieldHeight: themeVM.controlHeight
+    readonly property real labelWidth: Math.max(findLabel.implicitWidth, replaceLabel.implicitWidth, fieldLabel.implicitWidth)
 
     function focusField(useReplace) {
         if (useReplace) {
@@ -35,19 +38,21 @@ Window {
     }
 
     ColumnLayout {
+        id: searchForm
         anchors.fill: parent
-        anchors.margins: 14
-        spacing: 8
+        anchors.margins: 12
+        spacing: 6
 
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
 
             Label {
+                id: findLabel
                 text: i18n.t("Find")
-                font.pixelSize: 11
-                color: "#9a9a9a"
-                Layout.preferredWidth: 52
+                font.pixelSize: 12
+                color: themeVM.onSurface
+                Layout.preferredWidth: searchWindow.labelWidth
             }
 
             TextField {
@@ -55,6 +60,7 @@ Window {
                 Layout.fillWidth: true
                 implicitHeight: searchWindow.fieldHeight
                 font.pixelSize: 13
+                Accessible.name: findLabel.text
                 text: searchVM.query
                 onTextEdited: searchVM.query = text
                 onAccepted: searchVM.findNext()
@@ -66,10 +72,11 @@ Window {
             spacing: 8
 
             Label {
+                id: replaceLabel
                 text: i18n.t("Replace")
-                font.pixelSize: 11
-                color: "#9a9a9a"
-                Layout.preferredWidth: 52
+                font.pixelSize: 12
+                color: themeVM.onSurface
+                Layout.preferredWidth: searchWindow.labelWidth
             }
 
             TextField {
@@ -77,6 +84,7 @@ Window {
                 Layout.fillWidth: true
                 implicitHeight: searchWindow.fieldHeight
                 font.pixelSize: 13
+                Accessible.name: replaceLabel.text
                 text: searchVM.replacement
                 onTextEdited: searchVM.replacement = text
                 onAccepted: searchVM.replaceCurrent()
@@ -88,15 +96,18 @@ Window {
             spacing: 8
 
             Label {
+                id: fieldLabel
                 text: i18n.t("Field")
-                font.pixelSize: 11
-                color: "#9a9a9a"
-                Layout.preferredWidth: 52
+                font.pixelSize: 12
+                color: themeVM.onSurface
+                Layout.preferredWidth: searchWindow.labelWidth
             }
 
             ComboBox {
                 id: fieldCombo
-                implicitWidth: 120
+                Accessible.name: fieldLabel.text
+                Layout.minimumWidth: 120
+                implicitContentWidthPolicy: ComboBox.WidestText
                 implicitHeight: searchWindow.fieldHeight
                 font.pixelSize: 12
                 model: [i18n.t("Text"), i18n.t("Actor"), i18n.t("Effect"), i18n.t("Style")]
@@ -125,7 +136,7 @@ Window {
             Layout.fillWidth: true
             spacing: 8
 
-            Item { Layout.preferredWidth: 52 }
+            Item { Layout.preferredWidth: searchWindow.labelWidth }
 
             CheckBox {
                 text: i18n.t("In selection")
@@ -143,6 +154,18 @@ Window {
 
             Button {
                 text: i18n.t("Find Next")
+                icon.source: "qrc:/icons/search.svg"
+                icon.color: themeVM.onPrimary
+                icon.width: 18
+                icon.height: 18
+                padding: 6
+                leftPadding: 10
+                rightPadding: 10
+                topInset: 0
+                bottomInset: 0
+                leftInset: 0
+                rightInset: 0
+                palette.buttonText: themeVM.onPrimary
                 highlighted: true
                 onClicked: searchVM.findNext()
             }
@@ -164,9 +187,10 @@ Window {
 
         Label {
             Layout.fillWidth: true
+            Layout.preferredWidth: 0
             text: searchVM.statusMessage
-            font.pixelSize: 11
-            color: searchVM.statusMessage.indexOf("Invalid") >= 0 ? "#ff9a9a" : "#9a9a9a"
+            font.pixelSize: 12
+            color: searchVM.statusMessage.indexOf("Invalid") >= 0 ? themeVM.danger : themeVM.onSurfaceVariant
             elide: Text.ElideRight
         }
 

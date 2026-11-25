@@ -5,6 +5,7 @@
 #include "../options.h"
 
 #include "aegisub_core.h"
+#include "qt_path.h"
 
 #include <libaegisub/dispatch.h>
 #include <libaegisub/exception.h>
@@ -14,12 +15,18 @@
 #include <libaegisub/option.h>
 #include <libaegisub/path.h>
 
+#ifdef _WIN32
+#include <boost/locale/generator.hpp>
+#endif
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 
+#include <cstdio>
 #include <exception>
 #include <sstream>
 #include <string>
@@ -67,6 +74,68 @@ QString toQString(agi::fs::path const &path) {
 #endif
 }
 
+/// Creates \p path if needed and reports whether it is usable as a directory.
+///
+/// libaegisub creates ?local itself with agi::fs::CreateDirectory, which maps
+/// Win32 errors through POSIX errc constants and logs localized (non-UTF-8)
+/// error text before throwing; preparing the directories with Qt keeps that code
+/// out of the normal startup path (see docs/qt6-frontend.md pitfalls 56/58).
+bool prepareDirectory(QString const &path) {
+    if (path.isEmpty())
+        return false;
+
+    const QFileInfo info(path);
+    if (info.exists()) {
+        // A regular file in the way (e.g. a read-only placeholder) means the
+        // directory cannot be used.
+        if (!info.isDir())
+            return false;
+    } else if (!QDir().mkpath(path)) {
+        return false;
+    }
+
+    // QFileInfo::isWritable() is not reliable for directories on Windows
+    // (MSVC's _waccess only checks that the directory exists), so prove
+    // writability by creating and removing a real temporary file.
+    QTemporaryFile probe(QDir(path).filePath(QStringLiteral(".aegisub_qt_write_XXXXXX")));
+    probe.setAutoRemove(true);
+    return probe.open();
+}
+
+/// Log emitter for the Qt frontend.
+///
+/// libaegisub's Windows EmitSTDOUT (libaegisub/windows/log_win.cpp) converts
+/// every formatted message from UTF-8 to UTF-16 with charset::ConvertW before
+/// calling OutputDebugStringW. Messages are not guaranteed to be UTF-8: e.g.
+/// CHECKED_CALL in libaegisub/common/fs.cpp logs ec.message(), which on a
+/// zh-CN machine is the ANSI (GBK) text "存取被拒。", and that makes the
+/// conversion throw agi::charset::BadInput. The throw happens on the log
+/// dispatch thread, where it cannot be delivered to the GUI thread and used to
+/// terminate the process (pitfalls 56/57). Writing the raw bytes to stderr
+/// needs no conversion and cannot throw. Only Exception/Assert/Warning are
+/// emitted unless AEGISUB_QT_LOG_STDERR=1 asks for everything, so the normal
+/// debug output stays out of automated stderr checks.
+class StderrLogEmitter final : public agi::log::Emitter {
+public:
+    void log(agi::log::SinkMessage const &message) noexcept override {
+        if (message.severity > agi::log::Warning && !verbose_)
+            return;
+
+        const char severity = agi::log::Severity_ID[int(message.severity)];
+        std::fprintf(stderr, "[%s] %s:%d %c %s\n", message.section, message.file,
+                     message.line, severity, message.message.c_str());
+        std::fflush(stderr);
+    }
+
+private:
+    // AEGISUB_QT_LOG_STDERR=1 (or any value not starting with '0') requests the
+    // full log; the default only forwards Exception/Assert/Warning.
+    bool verbose_ = [] {
+        const QByteArray value = qgetenv("AEGISUB_QT_LOG_STDERR");
+        return !value.isEmpty() && value.at(0) != '0';
+    }();
+};
+
 } // namespace
 
 namespace aegisub_qt {
@@ -83,13 +152,38 @@ bool InitializeCore(QString *error) {
         return true;
 
     try {
+#ifdef _WIN32
+        // The shared providers pass path::string() to FFMS2, which expects UTF-8.
+        // Match the wx filesystem locale without changing the process locale.
+        agi::fs::path::imbue(boost::locale::generator().generate("en_US.UTF-8"));
+#endif
         trace(QStringLiteral("step: dispatch/log"));
         // libaegisub's logging is used all over the core; without a sink every
         // LOG_* macro would dereference a null pointer.
-        agi::dispatch::Init([](agi::dispatch::Thunk f) { f(); });
+        // libaegisub's dispatch queues hand C++ exceptions from background
+        // thunks back through this hook (see Queue::Async in
+        // libaegisub/common/dispatch.cpp: invoke_main(rethrow_exception)).
+        // The wx frontend posts the thunk to its main loop and catches there,
+        // but the Qt frontend has no wx main loop, so the thunk runs inline on
+        // the dispatch worker and any escaping exception would call
+        // std::terminate -> abort (Windows 0xC0000409, see pitfall 56).
+        agi::dispatch::Init([](agi::dispatch::Thunk f) {
+            try {
+                f();
+            } catch (agi::Exception const &e) {
+                std::fprintf(stderr, "[dispatch] background exception: %s\n", e.GetMessage().c_str());
+            } catch (std::exception const &e) {
+                std::fprintf(stderr, "[dispatch] background exception: %s\n", e.what());
+            } catch (...) {
+                std::fputs("[dispatch] background unknown exception\n", stderr);
+            }
+            std::fflush(stderr);
+        });
         if (!agi::log::log) {
             agi::log::log = new agi::log::LogSink;
-            agi::log::log->Subscribe(agi::make_unique<agi::log::EmitSTDOUT>());
+            // Do not use EmitSTDOUT: it assumes every log message is UTF-8 and
+            // throws agi::charset::BadInput on ANSI/GBK platform error text.
+            agi::log::log->Subscribe(agi::make_unique<StderrLogEmitter>());
         }
 
         trace(QStringLiteral("step: path"));
@@ -103,9 +197,9 @@ bool InitializeCore(QString *error) {
             //   3. if that is not writable, fall back to .qt_user next to the exe
             //      so the prototype can still exercise the real option store.
             QString user_dir;
-            const QByteArray override_dir = qgetenv("AEGISUB_QT_CONFIG_DIR");
+            const QString override_dir = qEnvironmentVariable("AEGISUB_QT_CONFIG_DIR");
             if (!override_dir.isEmpty()) {
-                user_dir = QString::fromLocal8Bit(override_dir);
+                user_dir = override_dir;
             } else {
                 user_dir = toQString(config::path->Decode("?user"));
             }
@@ -126,11 +220,54 @@ bool InitializeCore(QString *error) {
             if (!created)
                 return fail(QStringLiteral("Could not create the user config directory: ") + user_dir);
 
-            config::path->SetToken("?user", agi::fs::path(user_dir.toStdWString()));
-            // Sandboxed runs must not write outside the override directory:
-            // ffms2 keeps its index cache under ?local (see VideoViewModel).
-            if (!override_dir.isEmpty())
-                config::path->SetToken("?local", agi::fs::path(user_dir.toStdWString()));
+            config::path->SetToken("?user", ToNativePath(user_dir));
+
+            // Per-machine caches (ffms2 indexes, font caches, ...) live under
+            // ?local, which defaults to %LOCALAPPDATA%\Aegisub. libaegisub's
+            // create-directory helper logs a localized (non-UTF-8) error before
+            // throwing when it cannot create it, which used to kill the process
+            // on restricted tokens (pitfalls 56-58). Prepare it with Qt and fall
+            // back to a writable directory next to the executable, mirroring the
+            // .qt_user fallback above. Sandboxed runs must not write outside the
+            // override directory.
+            QString local_dir = override_dir.isEmpty()
+                ? toQString(config::path->Decode("?local"))
+                : user_dir;
+            if (!prepareDirectory(local_dir)) {
+                const QString unwritable_local = local_dir;
+                if (override_dir.isEmpty()) {
+                    // First fall back next to the executable (mirrors .qt_user);
+                    // a read-only install directory is not usable either, so the
+                    // last resort is the per-user temporary directory: cache
+                    // data there is lost on reboot but media keeps working.
+                    const QString fallbacks[] = {
+                        app_dir.filePath(QStringLiteral(".qt_local")),
+                        QDir(QDir::tempPath()).filePath(QStringLiteral("Aegisub-qt/local")),
+                    };
+                    for (const QString &candidate : fallbacks) {
+                        if (!prepareDirectory(candidate))
+                            continue;
+                        trace(QStringLiteral("  ?local not writable (") + unwritable_local
+                              + QStringLiteral("), falling back to ") + candidate);
+                        local_dir = candidate;
+                        break;
+                    }
+                }
+                if (local_dir == unwritable_local) {
+                    // Sandboxed runs must not write outside the override
+                    // directory, and there is no fallback left.
+                    trace(QStringLiteral("  ?local not writable: ") + local_dir);
+                }
+            }
+            trace(QStringLiteral("  ?local = ") + local_dir);
+            config::path->SetToken("?local", ToNativePath(local_dir));
+
+            // ffms2 writes its index cache below ?local/ffms2cache; create it
+            // here so the provider never has to (and never has a reason to log
+            // a filesystem error about it).
+            const QString ffms2_cache = local_dir + QStringLiteral("/ffms2cache");
+            if (!prepareDirectory(ffms2_cache))
+                trace(QStringLiteral("  ?local/ffms2cache not writable: ") + ffms2_cache);
         }
 
         const std::string defaults = readTextFile(app_dir.filePath(QStringLiteral("default_config.json")));
@@ -175,9 +312,22 @@ bool FlushOptions(QString *error) {
     try {
         config::opt->Flush();
         return true;
+    } catch (agi::Exception const &e) {
+        // agi::Exception does NOT derive from std::exception (see
+        // libaegisub/exception.h), so the generic catch below misses it. This
+        // runs from aboutToQuit: an escaping exception would call
+        // std::terminate -> abort (0xC0000409) when the user config cannot be
+        // written, e.g. with a read-only profile (S14 verification, pitfall 61).
+        if (error)
+            *error = QString::fromStdString(e.GetMessage());
+        return false;
     } catch (std::exception const &e) {
         if (error)
             *error = QString::fromUtf8(e.what());
+        return false;
+    } catch (...) {
+        if (error)
+            *error = QStringLiteral("Unknown error while saving preferences");
         return false;
     }
 }

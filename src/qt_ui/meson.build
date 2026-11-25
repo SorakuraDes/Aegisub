@@ -10,6 +10,7 @@ qt6_moc = qt6.preprocess(
         'viewmodels/about_vm.h',
         'viewmodels/translation_service.h',
         'viewmodels/preferences_vm.h',
+        'viewmodels/theme_vm.h',
         'viewmodels/properties_vm.h',
         'viewmodels/subtitle_grid_model.h',
         'viewmodels/edit_box_vm.h',
@@ -28,6 +29,8 @@ qt6_moc = qt6.preprocess(
     include_directories: [include_directories('.')],
     dependencies: qt6_dep,
 )
+
+highlighter_moc = qt6.preprocess(moc_headers: files('ass_syntax_highlighter.h'), dependencies: qt6_dep)
 
 # The wxWidgets build compiles these JSON blobs into libresrc. The Qt target
 # reads them at startup for agi::Options, so copy them next to the executable.
@@ -123,6 +126,8 @@ aegisub_qt = executable('aegisub-qt',
         'viewmodels/about_vm.cpp',
         'viewmodels/translation_service.cpp',
         'viewmodels/preferences_vm.cpp',
+        'viewmodels/theme_vm.cpp',
+        'ass_syntax_highlighter.cpp',
         'viewmodels/properties_vm.cpp',
         'viewmodels/subtitle_grid_model.cpp',
         'viewmodels/edit_box_vm.cpp',
@@ -141,6 +146,7 @@ aegisub_qt = executable('aegisub-qt',
         '../version.cpp',
     ),
     qt6_moc,
+    highlighter_moc,
     qt6_resources,
     version_h,
     include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.'), include_directories('..')],
@@ -158,3 +164,24 @@ ass_tag_utils_test = executable('qt-ass-tag-utils-test',
     build_by_default: false,
 )
 test('qt-ass-tag-utils', ass_tag_utils_test)
+
+highlighter_test = executable('qt-ass-highlighter-test',
+    files('ass_syntax_highlighter.cpp', 'ass_syntax_highlighter_test.cpp'),
+    highlighter_moc,
+    dependencies: [qt6_dep] + deps,
+    include_directories: [libaegisub_inc, include_directories('.')],
+    link_with: libaegisub,
+    cpp_args: ['/utf-8'],
+    build_by_default: false,
+)
+test('qt-ass-highlighter', highlighter_test)
+
+spectrum_test = executable('qt-audio-spectrum-test',
+    files('audio_spectrum_test.cpp', 'aegisub_core.cpp'),
+    include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('..')],
+    link_with: [av_qt_core, ass_qt_core, libaegisub],
+    dependencies: [qt6_dep] + deps,
+    cpp_args: ['/utf-8'],
+    build_by_default: false,
+)
+test('qt-audio-spectrum', spectrum_test)

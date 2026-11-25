@@ -4,8 +4,8 @@ import QtQuick.Layouts
 
 Rectangle {
     id: grid
-    color: "#1b1b1b"
-    radius: 6
+    color: themeVM.surface
+    radius: themeVM.radiusMedium
 
     readonly property int rowHeight: 26
     readonly property int colRow: 42
@@ -22,22 +22,30 @@ Rectangle {
     Menu {
         id: rowMenu
 
-        MenuItem {
+        CompactIconMenuItem {
             text: i18n.t("Insert Before")
+            icon.source: "qrc:/icons/add.svg"
+            icon.color: themeVM.onSurface
             onClicked: gridModel.insertBefore(gridModel.activeRow)
         }
-        MenuItem {
+        CompactIconMenuItem {
             text: i18n.t("Insert After")
+            icon.source: "qrc:/icons/add.svg"
+            icon.color: themeVM.onSurface
             onClicked: gridModel.insertAfter(gridModel.activeRow)
         }
         MenuSeparator {}
-        MenuItem {
+        CompactIconMenuItem {
             text: i18n.t("Duplicate")
+            icon.source: "qrc:/icons/content_copy.svg"
+            icon.color: themeVM.onSurface
             enabled: gridModel.selectionCount > 0
             onClicked: gridModel.duplicateSelectedRows()
         }
-        MenuItem {
+        CompactIconMenuItem {
             text: i18n.t("Delete")
+            icon.source: "qrc:/icons/delete.svg"
+            icon.color: themeVM.onSurface
             enabled: gridModel.selectionCount > 0
             onClicked: gridModel.deleteSelectedRows()
         }
@@ -67,63 +75,63 @@ Rectangle {
                 Layout.preferredWidth: grid.colRow
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
             Label {
                 text: i18n.t("Start")
                 Layout.preferredWidth: grid.colTime
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
             Label {
                 text: i18n.t("End")
                 Layout.preferredWidth: grid.colTime
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
             Label {
                 text: i18n.t("Layer")
                 Layout.preferredWidth: grid.colLayer
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
             Label {
                 text: i18n.t("Style")
                 Layout.preferredWidth: grid.colStyle
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
             Label {
                 text: i18n.t("Actor")
                 Layout.preferredWidth: grid.colActor
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
             Label {
                 text: i18n.t("Effect")
                 Layout.preferredWidth: grid.colEffect
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
             Label {
                 text: i18n.t("Text")
                 Layout.fillWidth: true
                 font.pixelSize: 11
                 font.bold: true
-                color: "#9a9a9a"
+                color: themeVM.onSurfaceVariant
             }
         }
 
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: "#3a3a3a"
+            color: themeVM.outlineVariant
         }
 
         ListView {
@@ -141,15 +149,8 @@ Rectangle {
                 height: grid.rowHeight
                 property bool isActive: index === gridModel.activeRow
                 property bool isSelected: model.isSelected === true
-                color: isActive
-                       ? Qt.rgba(Material.color(Material.Blue).r,
-                                 Material.color(Material.Blue).g,
-                                 Material.color(Material.Blue).b, 0.35)
-                       : (isSelected
-                          ? Qt.rgba(Material.color(Material.Blue).r,
-                                    Material.color(Material.Blue).g,
-                                    Material.color(Material.Blue).b, 0.18)
-                          : (index % 2 === 0 ? "#1f1f1f" : "#242424"))
+                color: isActive ? themeVM.rowActive : isSelected ? themeVM.rowSelected
+                       : (index % 2 === 0 ? themeVM.surfaceContainerLow : themeVM.rowAlt)
 
                 MouseArea {
                     anchors.fill: parent
@@ -190,55 +191,55 @@ Rectangle {
                         Layout.preferredWidth: grid.colRow
                         font.family: grid.monoFont
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#6f9fdf"
+                        color: model.isComment ? themeVM.rowComment : themeVM.primary
                     }
                     Label {
                         text: model.startTime
                         Layout.preferredWidth: grid.colTime
                         font.family: grid.monoFont
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#cfcfcf"
+                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
                     }
                     Label {
                         text: model.endTime
                         Layout.preferredWidth: grid.colTime
                         font.family: grid.monoFont
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#cfcfcf"
+                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
                     }
                     Label {
                         text: model.layer
                         Layout.preferredWidth: grid.colLayer
                         font.family: grid.monoFont
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#cfcfcf"
+                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
                     }
                     Label {
                         text: model.styleName
                         Layout.preferredWidth: grid.colStyle
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#dcdcdc"
+                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
                         elide: Text.ElideRight
                     }
                     Label {
                         text: model.actor
                         Layout.preferredWidth: grid.colActor
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#bdbdbd"
+                        color: model.isComment ? themeVM.rowComment : themeVM.onSurfaceVariant
                         elide: Text.ElideRight
                     }
                     Label {
                         text: model.effect
                         Layout.preferredWidth: grid.colEffect
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#bdbdbd"
+                        color: model.isComment ? themeVM.rowComment : themeVM.onSurfaceVariant
                         elide: Text.ElideRight
                     }
                     Label {
                         text: model.text
                         Layout.fillWidth: true
                         font.pixelSize: 12
-                        color: model.isComment ? "#8a8a8a" : "#eeeeee"
+                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
                         elide: Text.ElideRight
                     }
                 }

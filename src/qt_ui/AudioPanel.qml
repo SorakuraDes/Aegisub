@@ -3,139 +3,140 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import Aegisub 1.0
 
-// Audio waveform panel: interactive waveform (drag / left click = Start,
-// right click = End, Ctrl+wheel = zoom, wheel = scroll) plus a compact
-// transport bar. The view model owns decoding, playback and the timing commit.
 Item {
     id: root
+    component AudioTool: CompactIconButton {
+        implicitWidth: 28
+        implicitHeight: 28
+        Layout.alignment: Qt.AlignVCenter
+        enabled: audioVM.hasAudio
+    }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 1
-
         AudioWaveform {
-            id: waveform
+            Accessible.role: Accessible.Graphic
+            Accessible.name: i18n.t("Audio waveform")
             Layout.fillWidth: true
             Layout.fillHeight: true
             viewModel: audioVM
+            colors: ({ background: themeVM.surface, surface: themeVM.surfaceContainerHigh,
+                foreground: themeVM.onSurface, muted: themeVM.onSurfaceVariant,
+                primary: themeVM.primary, secondary: themeVM.secondary,
+                outline: themeVM.outlineVariant, start: themeVM.danger,
+                end: themeVM.endLine,
+                keyframe: themeVM.kfLine })
         }
-
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 34
-            color: "#1b1b1b"
-
+            Layout.minimumHeight: 36
+            Layout.preferredHeight: 36
+            Layout.maximumHeight: 36
+            color: themeVM.surfaceContainer
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 6
-                anchors.rightMargin: 6
-                spacing: 4
-
-                Button {
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.topMargin: 0
+                anchors.bottomMargin: 0
+                spacing: 2
+                AudioTool {
+                    icon.source: "qrc:/icons/play_arrow.svg"
                     text: i18n.t("Play Line")
-                    flat: true
-                    font.pixelSize: 11
-                    implicitHeight: 24
-                    topPadding: 0
-                    bottomPadding: 0
-                    leftPadding: 8
-                    rightPadding: 8
-                    enabled: audioVM.hasAudio
                     onClicked: audioVM.playSelection()
                 }
-
-                Button {
+                AudioTool {
+                    icon.source: "qrc:/icons/stop.svg"
                     text: i18n.t("Stop")
-                    flat: true
-                    font.pixelSize: 11
-                    implicitHeight: 24
-                    topPadding: 0
-                    bottomPadding: 0
-                    leftPadding: 6
-                    rightPadding: 6
                     enabled: audioVM.hasAudio && audioVM.isPlaying
                     onClicked: audioVM.stop()
                 }
-
-                Button {
-                    text: "\u2212"
-                    flat: true
-                    font.pixelSize: 11
-                    implicitHeight: 24
-                    topPadding: 0
-                    bottomPadding: 0
-                    leftPadding: 6
-                    rightPadding: 6
-                    enabled: audioVM.hasAudio
+                AudioTool {
+                    icon.source: "qrc:/icons/zoom_out.svg"
+                    text: i18n.t("Zoom Out")
                     onClicked: audioVM.zoomBy(0.8)
                 }
-
-                Button {
-                    text: "+"
-                    flat: true
-                    font.pixelSize: 11
-                    implicitHeight: 24
-                    topPadding: 0
-                    bottomPadding: 0
-                    leftPadding: 6
-                    rightPadding: 6
-                    enabled: audioVM.hasAudio
+                AudioTool {
+                    icon.source: "qrc:/icons/zoom_in.svg"
+                    text: i18n.t("Zoom In")
                     onClicked: audioVM.zoomBy(1.25)
                 }
-
+                ButtonGroup { id: displayModes }
+                AudioTool {
+                    icon.source: "qrc:/icons/graphic_eq.svg"
+                    text: i18n.t("Wave")
+                    checkable: true
+                    checked: !audioVM.spectrumMode
+                    ButtonGroup.group: displayModes
+                    onClicked: audioVM.spectrumMode = false
+                }
+                AudioTool {
+                    icon.source: "qrc:/icons/equalizer.svg"
+                    text: i18n.t("Spec")
+                    checkable: true
+                    checked: audioVM.spectrumMode
+                    ButtonGroup.group: displayModes
+                    onClicked: audioVM.spectrumMode = true
+                }
+                AudioTool {
+                    icon.source: "qrc:/icons/follow_playhead.svg"
+                    text: i18n.t("Follow Playhead")
+                    checkable: true
+                    checked: audioVM.followPlayhead
+                    onToggled: audioVM.followPlayhead = checked
+                }
                 CheckBox {
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitHeight: 28
                     text: i18n.t("Snap KF")
-                    font.pixelSize: 9
+                    font.pixelSize: 10
                     spacing: 2
-                    implicitHeight: 24
+                    padding: 0
                     topPadding: 0
                     bottomPadding: 0
-                    leftPadding: 0
-                    rightPadding: 0
+                    topInset: 0
+                    bottomInset: 0
                     checked: audioVM.snapToKeyframes
                     enabled: audioVM.keyframeCount > 0
                     onToggled: audioVM.snapToKeyframes = checked
                 }
-
                 Label {
-                    text: audioVM.formatTime(audioVM.activeStartMs) + " \u2192 "
-                          + audioVM.formatTime(audioVM.activeEndMs)
+                    Layout.alignment: Qt.AlignVCenter
+                    text: audioVM.formatTime(audioVM.activeStartMs) + " \u2192 " + audioVM.formatTime(audioVM.activeEndMs)
                     font.pixelSize: 10
                     font.family: "Consolas"
-                    color: "#e0e0e0"
-                    elide: Text.ElideRight
-                    Layout.preferredWidth: 150
-                    // Responsive: the dual-panel layout is too narrow for the
-                    // time range; keep the track/player status readable there.
+                    color: themeVM.onSurface
                     visible: root.width > 700
                 }
-
                 Label {
+                    Layout.alignment: Qt.AlignVCenter
                     objectName: "audioTrackLabel"
                     text: audioVM.trackLabel
                     font.pixelSize: 10
-                    color: "#b388ff"
+                    color: themeVM.secondary
                     elide: Text.ElideRight
                     Layout.maximumWidth: 120
                     visible: audioVM.trackLabel.length > 0 && root.width > 620
                 }
-
                 Label {
-                    text: audioVM.playerStatus
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.leftMargin: root.width > 420 ? 8 : 0
+                    text: root.width > 420 ? audioVM.playerStatus : ""
                     font.pixelSize: 10
-                    color: "#8a8a8a"
+                    color: themeVM.onSurfaceVariant
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.maximumWidth: 180
-                    visible: audioVM.hasAudio && audioVM.playerStatus.length > 0
                 }
-
                 Slider {
-                    Layout.preferredWidth: 80
-                    from: 0
-                    to: 1
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.maximumHeight: 28
+                    Layout.preferredWidth: root.width > 420 ? 80 : 42
+                    Layout.minimumWidth: 30
+                    from: 0; to: 1
                     value: audioVM.volume
+                    Accessible.name: i18n.t("Volume")
                     enabled: audioVM.hasAudio
                     onMoved: audioVM.volume = value
                 }

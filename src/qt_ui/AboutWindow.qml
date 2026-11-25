@@ -4,34 +4,42 @@ import QtQuick.Layouts
 
 Window {
     id: aboutWindow
-    width: 560
-    height: 560
-    minimumWidth: 420
-    minimumHeight: 420
-    title: "About Aegisub"
-    color: "#1e1e1e"
+    width: 500
+    height: 450
+    minimumWidth: 400
+    minimumHeight: 360
+    title: i18n.t("About Aegisub")
+    color: themeVM.surface
 
-    Material.theme: Material.Dark
-    Material.accent: Material.Blue
+    Material.theme: themeVM.darkMode ? Material.Dark : Material.Light
+    Material.accent: themeVM.primary
+    Material.background: themeVM.surfaceContainer
+    Material.foreground: themeVM.onSurface
+
+    Shortcut {
+        sequence: StandardKey.Cancel
+        context: Qt.WindowShortcut
+        onActivated: aboutWindow.close()
+    }
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 24
-        spacing: 14
+        anchors.margins: 14
+        spacing: 8
 
         Label {
             Layout.fillWidth: true
             text: aboutVM.appName
             font.pixelSize: 24
             font.bold: true
-            color: "white"
+            color: themeVM.onSurface
         }
 
         Label {
             Layout.fillWidth: true
             text: aboutVM.versionInfo
             font.pixelSize: 14
-            color: "#cccccc"
+            color: themeVM.onSurfaceVariant
             wrapMode: Text.Wrap
         }
 
@@ -39,7 +47,7 @@ Window {
             Layout.fillWidth: true
             text: aboutVM.copyright
             font.pixelSize: 13
-            color: "#aaaaaa"
+            color: themeVM.onSurfaceVariant
             wrapMode: Text.Wrap
         }
 
@@ -50,8 +58,8 @@ Window {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#2a2a2a"
-            radius: 6
+            color: themeVM.surfaceContainer
+            radius: themeVM.radiusMedium
 
             ScrollView {
                 id: translatorsScroll
@@ -68,7 +76,7 @@ Window {
                     selectByMouse: true
                     wrapMode: Text.Wrap
                     font.pixelSize: 13
-                    color: "#dddddd"
+                    color: themeVM.onSurface
                     padding: 0
                     background: null
                 }
@@ -77,7 +85,7 @@ Window {
 
         Button {
             Layout.alignment: Qt.AlignHCenter
-            text: "Close"
+            text: i18n.t("Close")
             onClicked: aboutWindow.close()
         }
     }

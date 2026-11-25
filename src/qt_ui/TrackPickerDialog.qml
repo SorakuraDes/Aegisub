@@ -10,15 +10,17 @@ import QtQuick.Layouts
 Window {
     id: root
     width: 380
-    height: 300
+    height: 264
     minimumWidth: 320
-    minimumHeight: 230
-    color: "#1e1e1e"
+    minimumHeight: 210
+    color: themeVM.surface
     modality: Qt.ApplicationModal
-    title: root.mediaKind === "video" ? "Select Video Track" : "Select Audio Track"
+    title: root.mediaKind === "video" ? i18n.t("Select Video Track") : i18n.t("Select Audio Track")
 
-    Material.theme: Material.Dark
-    Material.accent: Material.Blue
+    Material.theme: themeVM.darkMode ? Material.Dark : Material.Light
+    Material.accent: themeVM.primary
+    Material.background: themeVM.surfaceContainer
+    Material.foreground: themeVM.onSurface
 
     property string mediaPath: ""
     property string mediaKind: "audio"
@@ -85,6 +87,8 @@ Window {
         onActivated: root.confirm()
     }
 
+    ButtonGroup { id: trackGroup }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
@@ -97,7 +101,7 @@ Window {
                   : i18n.t("Multiple audio tracks detected, please choose the one you wish to load:")
             font.pixelSize: 12
             wrapMode: Text.WordWrap
-            color: "#d0d0d0"
+            color: themeVM.onSurface
         }
 
         ListView {
@@ -107,14 +111,30 @@ Window {
             clip: true
             model: root.trackItems
             spacing: 2
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {}
 
             delegate: Item {
+                id: trackRow
+                required property int index
+                required property var modelData
                 width: ListView.view.width
-                height: 30
+                height: themeVM.controlHeight
+                readonly property bool selected: root.selectedTrackId === modelData.id
+
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.rightMargin: 12
+                    radius: themeVM.radiusSmall
+                    color: trackRow.selected ? themeVM.primaryContainer : "transparent"
+                    border.width: radio.visualFocus ? 2 : 0
+                    border.color: themeVM.onSurface
+                }
 
                 RadioButton {
                     id: radio
                     anchors.fill: parent
+                    anchors.rightMargin: 12
                     text: modelData.label !== undefined
                           ? modelData.label
                           : ("Track " + (index + 1) + " \u2014 "
@@ -122,15 +142,26 @@ Window {
                     font.pixelSize: 12
                     topPadding: 0
                     bottomPadding: 0
-                    checked: root.selectedTrackId === modelData.id
-                    onToggled: if (checked) root.selectedTrackId = modelData.id
+                    ButtonGroup.group: trackGroup
+                    checked: trackRow.selected
+                    contentItem: Label {
+                        leftPadding: radio.mirrored ? 0 : radio.indicator.width + radio.spacing
+                        rightPadding: radio.mirrored ? radio.indicator.width + radio.spacing : 0
+                        text: radio.text
+                        font: radio.font
+                        color: trackRow.selected ? themeVM.onPrimaryContainer : themeVM.onSurface
+                        elide: Text.ElideRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: root.selectedTrackId = modelData.id
                 }
 
-                MouseArea {
-                    anchors.fill: parent
+                TapHandler {
                     acceptedButtons: Qt.LeftButton
-                    onClicked: root.selectedTrackId = modelData.id
-                    onDoubleClicked: root.confirm()
+                    onDoubleTapped: {
+                        root.selectedTrackId = modelData.id
+                        root.confirm()
+                    }
                 }
             }
         }

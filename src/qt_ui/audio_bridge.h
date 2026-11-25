@@ -7,6 +7,8 @@
 
 #include "media_track_info.h"
 
+#include <libaegisub/fs_fwd.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -33,14 +35,14 @@ public:
     /// Enumerate the audio tracks of a container without opening/decoding it.
     /// An empty list means "no audio track"; `error` is only set when the file
     /// itself cannot be opened.
-    static std::vector<MediaTrackInfo> ProbeAudioTracks(std::string const &utf8_path,
+    static std::vector<MediaTrackInfo> ProbeAudioTracks(agi::fs::path const &path,
                                                        std::string *error);
 
     /// Open a real audio (or audio+video) file: FFmpegSource -> S16 mono
     /// conversion -> RAM/HD cache (per Audio/Cache/Type). `preferredTrack` is an
     /// ffms2 track id from ProbeAudioTracks(); -1 auto-selects the first audio
     /// track and never shows a dialog.
-    bool OpenFile(std::string const &utf8_path, std::string *error, int preferredTrack = -1);
+    bool OpenFile(agi::fs::path const &path, std::string *error, int preferredTrack = -1);
     /// Open a synthetic 440 Hz sine (no file needed; used by the automated
     /// checks). The stock DummyAudioProvider ignores its `ln` parameter and only
     /// produces silence/noise, so the bridge synthesises its own signal.
@@ -59,6 +61,12 @@ public:
     /// become 0; this never throws.
     void ComputePeaks(int64_t start_sample, int64_t end_sample, int width,
                       std::vector<float> &out_min, std::vector<float> &out_max) const;
+
+    /// Column-major normalized dB levels; bin 0 is DC, bin 256 is Nyquist.
+    static constexpr int spectrumBins = 257;
+    void ComputeSpectrum(int64_t start, int64_t end, int width,
+                         std::vector<float> &levels) const;
+    int64_t DecodedSamples() const;
 
     bool PlayRange(int64_t start_sample, int64_t end_sample, std::string *error);
     void Stop();

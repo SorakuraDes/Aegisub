@@ -12,16 +12,19 @@ import QtQuick.Layouts
 Window {
     id: shiftWindow
     width: 420
-    height: 470
-    minimumWidth: 380
-    minimumHeight: 430
-    title: "Shift Times"
-    color: "#1e1e1e"
+    height: 352
+    minimumWidth: Math.max(380, shiftForm.implicitWidth + 2 * shiftForm.anchors.margins)
+    minimumHeight: shiftForm.implicitHeight + 2 * shiftForm.anchors.margins
+    title: i18n.t("Shift Times")
+    color: themeVM.surface
 
-    Material.theme: Material.Dark
-    Material.accent: Material.Blue
+    Material.theme: themeVM.darkMode ? Material.Dark : Material.Light
+    Material.accent: themeVM.primary
+    Material.background: themeVM.surfaceContainer
+    Material.foreground: themeVM.onSurface
 
-    readonly property int fieldHeight: 32
+    readonly property int fieldHeight: themeVM.controlHeight
+    readonly property real modeLabelWidth: Math.max(byTimeRadio.implicitWidth, byFramesRadio.implicitWidth)
 
     // True while loadForm() assigns the fields. Without it the SpinBox's
     // initial value fires onValueChanged and writes 0 back into the model.
@@ -67,15 +70,16 @@ Window {
     ButtonGroup { id: targetGroup }
 
     ColumnLayout {
+        id: shiftForm
         anchors.fill: parent
-        anchors.margins: 14
+        anchors.margins: 12
         spacing: 6
 
         // ---- Shift by -------------------------------------------------------
         Label {
             text: i18n.t("Shift by")
             font.pixelSize: 11
-            color: "#9a9a9a"
+            color: themeVM.onSurfaceVariant
         }
 
         RowLayout {
@@ -89,6 +93,7 @@ Window {
                 topPadding: 0
                 bottomPadding: 0
                 Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: shiftWindow.modeLabelWidth
                 ButtonGroup.group: modeGroup
                 checked: !shiftTimesVM.byFrames
                 onToggled: if (checked) shiftTimesVM.byFrames = false
@@ -97,6 +102,7 @@ Window {
             TextField {
                 id: shiftTimeField
                 objectName: "shiftTimeField"
+                Accessible.name: byTimeRadio.text
                 Layout.preferredWidth: 140
                 implicitHeight: shiftWindow.fieldHeight
                 font.pixelSize: 13
@@ -125,6 +131,7 @@ Window {
                 topPadding: 0
                 bottomPadding: 0
                 Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: shiftWindow.modeLabelWidth
                 enabled: shiftTimesVM.framesAvailable
                 ButtonGroup.group: modeGroup
                 checked: shiftTimesVM.byFrames
@@ -133,6 +140,7 @@ Window {
 
             SpinBox {
                 id: shiftFramesSpin
+                Accessible.name: byFramesRadio.text
                 from: -100000
                 to: 100000
                 editable: true
@@ -181,7 +189,7 @@ Window {
         Label {
             text: i18n.t("Affect")
             font.pixelSize: 11
-            color: "#9a9a9a"
+            color: themeVM.onSurfaceVariant
         }
 
         RowLayout {
@@ -228,7 +236,7 @@ Window {
         Label {
             text: i18n.t("Time fields")
             font.pixelSize: 11
-            color: "#9a9a9a"
+            color: themeVM.onSurfaceVariant
         }
 
         RowLayout {
@@ -277,10 +285,11 @@ Window {
         Label {
             id: statusLabel
             Layout.fillWidth: true
+            Layout.preferredWidth: 0
             text: shiftTimesVM.statusMessage
             visible: text.length > 0
-            font.pixelSize: 11
-            color: "#8fd18f"
+            font.pixelSize: 12
+            color: themeVM.onSurface
             elide: Text.ElideRight
         }
 

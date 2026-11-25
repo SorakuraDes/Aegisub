@@ -50,7 +50,9 @@
 #include "utils.h"
 
 #include <libaegisub/background_runner.h>
+#include <libaegisub/exception.h>
 #include <libaegisub/fs.h>
+#include <libaegisub/log.h>
 #include <libaegisub/path.h>
 
 #include <boost/algorithm/string/case_conv.hpp>
@@ -60,15 +62,12 @@
 #include <ffms.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 namespace aegisub_qt {
 namespace {
@@ -79,21 +78,6 @@ TrackSelector g_selector;
 TrackSelector CopySelector() {
     std::lock_guard<std::mutex> lock(g_selector_mutex);
     return g_selector;
-}
-
-/// UTF-8 -> native path (boost::filesystem::path on Windows is UTF-16).
-agi::fs::path pathFromUtf8(std::string const &utf8) {
-#ifdef _WIN32
-    if (utf8.empty())
-        return agi::fs::path();
-    const int length = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
-    std::wstring wide(size_t(length > 0 ? length : 0), L'\0');
-    if (length > 0)
-        MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), wide.data(), length);
-    return agi::fs::path(wide);
-#else
-    return agi::fs::path(utf8);
-#endif
 }
 
 FFMS_TrackType ToFFMSType(MediaKind kind) {
@@ -109,39 +93,67 @@ void SetTrackSelector(TrackSelector selector) {
 
 void ClearTrackSelector() { SetTrackSelector(TrackSelector()); }
 
-bool ProbeTracks(const std::string &utf8_path, MediaKind kind,
+bool ProbeTracks(agi::fs::path const &path, MediaKind kind,
                  std::vector<MediaTrackInfo> *tracks, std::string *error) {
     if (tracks)
         tracks->clear();
 
-    char error_buffer[1024];
-    FFMS_ErrorInfo error_info;
-    error_info.Buffer = error_buffer;
-    error_info.BufferSize = sizeof(error_buffer);
-    error_info.ErrorType = FFMS_ERROR_SUCCESS;
-    error_info.SubType = FFMS_ERROR_SUCCESS;
+    try {
+        // ffms2 requires FFMS_Init() to run before any other call (ffms2.h says
+        // "Pass 0 to both arguments"). The provider below calls it as well, but
+        // FFMS_CreateIndexer must not run first; the wx frontend happened to be
+        // fine only because the process had opened a provider earlier.
+        FFMS_Init(0, 0);
 
-    FFMS_Indexer *indexer =
-        FFMS_CreateIndexer(pathFromUtf8(utf8_path).string().c_str(), &error_info);
-    if (!indexer) {
+        char error_buffer[1024] = {};
+        FFMS_ErrorInfo error_info;
+        error_info.Buffer = error_buffer;
+        error_info.BufferSize = sizeof(error_buffer);
+        error_info.ErrorType = FFMS_ERROR_SUCCESS;
+        error_info.SubType = FFMS_ERROR_SUCCESS;
+
+        // InitializeCore installs the UTF-8 path codecvt on Windows, just as
+        // for the shared providers' source and index paths.
+        const auto filename_utf8 = path.string();
+        FFMS_Indexer *indexer = FFMS_CreateIndexer(filename_utf8.c_str(), &error_info);
+        if (!indexer) {
+            if (error)
+                *error = error_buffer;
+            return false;
+        }
+
+        // FFMS_CancelIndexing() deletes the indexer, so it must run on every exit
+        // path, including the ones that leave through an exception.
+        struct IndexerGuard {
+            FFMS_Indexer *indexer;
+            ~IndexerGuard() {
+                if (indexer)
+                    FFMS_CancelIndexing(indexer);
+            }
+        } guard{indexer};
+
+        // GetTracksOfType() only reads the indexer's stream list; the progress
+        // runner is not touched, so a provider with no runner is enough here.
+        FFmpegSourceProvider probe(nullptr);
+        const std::map<int, std::string> list = probe.GetTracksOfType(indexer, ToFFMSType(kind));
+
+        if (tracks) {
+            tracks->reserve(list.size());
+            for (auto const &track : list)
+                tracks->push_back(MediaTrackInfo{track.first, track.second});
+        }
+        return true;
+    } catch (agi::Exception const &ex) {
         if (error)
-            *error = error_buffer;
-        return false;
+            *error = ex.GetMessage();
+    } catch (std::exception const &ex) {
+        if (error)
+            *error = ex.what();
+    } catch (...) {
+        if (error)
+            *error = "Failed to probe the media file";
     }
-
-    // GetTracksOfType() only reads the indexer's stream list; the progress
-    // runner is not touched, so a provider with no runner is enough here.
-    FFmpegSourceProvider probe(nullptr);
-    const std::map<int, std::string> list = probe.GetTracksOfType(indexer, ToFFMSType(kind));
-
-    FFMS_CancelIndexing(indexer);
-
-    if (tracks) {
-        tracks->reserve(list.size());
-        for (auto const &track : list)
-            tracks->push_back(MediaTrackInfo{track.first, track.second});
-    }
-    return true;
+    return false;
 }
 
 } // namespace aegisub_qt
@@ -191,8 +203,12 @@ FFMS_Index *FFmpegSourceProvider::DoIndexing(FFMS_Indexer *Indexer,
     if (Index == nullptr)
         throw agi::EnvironmentError(std::string("Failed to index: ") + ErrInfo.Buffer);
 
-    // write index to disk for later use
-    FFMS_WriteIndex(CacheName.string().c_str(), Index, &ErrInfo);
+    // FFMS2 uses the same UTF-8 contract for index paths as for media paths.
+    const auto cache_utf8 = CacheName.string();
+    LOG_D("ffms/index") << "Writing index: " << cache_utf8;
+    if (FFMS_WriteIndex(cache_utf8.c_str(), Index, &ErrInfo))
+        LOG_D("ffms/index") << "Could not write index (FFMS error "
+                            << ErrInfo.ErrorType << '/' << ErrInfo.SubType << ')';
 
     return Index;
 }
@@ -292,15 +308,31 @@ agi::fs::path FFmpegSourceProvider::GetCacheFilename(agi::fs::path const& filena
     // Get the size of the file to be hashed
     uintmax_t len = agi::fs::Size(filename);
 
-    // Get the hash of the filename
+    // Hash the full UTF-8 path; the index basename itself is ASCII.
+    const auto filename_utf8 = filename.string();
     boost::crc_32_type hash;
-    hash.process_bytes(filename.string().c_str(), filename.string().size());
+    hash.process_bytes(filename_utf8.data(), filename_utf8.size());
 
     // Generate the filename
     auto result = config::path->Decode("?local/ffms2cache/" + std::to_string(hash.checksum()) + "_" + std::to_string(len) + "_" + std::to_string(agi::fs::ModifiedTime(filename)) + ".ffindex");
 
-    // Ensure that folder exists
-    agi::fs::CreateDirectory(result.parent_path());
+    // Ensure that folder exists. Do NOT use agi::fs::CreateDirectory here: it
+    // translates Win32 error codes through POSIX errc constants
+    // (libaegisub/common/fs.cpp), so a plain access-denied becomes a
+    // FileSystemUnknownError whose localized message then breaks UTF-8-only log
+    // converters (docs/qt6-frontend.md pitfalls 56/57). Failing to prepare the
+    // cache directory is not fatal: the index is only a cache and the next open
+    // simply indexes the file again. Log the numeric code only, never the
+    // localized ec.message() text.
+    std::error_code ec;
+#ifdef _WIN32
+    std::filesystem::create_directories(result.parent_path().wstring(), ec);
+#else
+    std::filesystem::create_directories(result.parent_path().string(), ec);
+#endif
+    if (ec)
+        LOG_D("ffms/index") << "Could not create the ffms2 cache directory (error "
+                            << ec.value() << ")";
 
     return result;
 }
