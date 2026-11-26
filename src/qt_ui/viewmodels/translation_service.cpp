@@ -215,6 +215,12 @@ bool TranslationService::load(const QString &code, Catalog &catalog) const {
         addQtLabel("Timing", QStringLiteral("时间"));
         addQtLabel("View", QStringLiteral("视图"));
         addQtLabel("Stripped Text", QStringLiteral("去除标签的文本"));
+        addQtLabel("Create new Fold", QStringLiteral("新建折叠"));
+        addQtLabel("Toggle Folds", QStringLiteral("切换折叠"));
+        addQtLabel("Clear Folds", QStringLiteral("清除折叠"));
+        addQtLabel("Open all Folds", QStringLiteral("展开所有折叠"));
+        addQtLabel("Close all Folds", QStringLiteral("收起所有折叠"));
+        addQtLabel("Clear all Folds", QStringLiteral("清除所有折叠"));
         addQtLabel("OK", QStringLiteral("确定"));
         addQtLabel("Apply", QStringLiteral("应用"));
         addQtLabel("Matched %1 line(s); selected %2 line(s)", QStringLiteral("匹配 %1 行；已选中 %2 行"));

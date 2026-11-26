@@ -52,7 +52,7 @@ SubtitleGridModel::SubtitleGridModel(AssFile *file, UndoManager *undoManager, QO
         commit_connection_ = file_->AddCommitListener(&SubtitleGridModel::onFileCommitted, this);
 
     // UndoManager is constructed before this model in main.cpp, so connecting
-    // here guarantees the model rebuilds rows_ before any later listener of
+    // here guarantees the model rebuilds all_rows_ before any later listener of
     // UndoManager::restored asks it for the active line.
     if (undo_manager_)
         connect(undo_manager_, &UndoManager::restored, this, &SubtitleGridModel::onRestored);
@@ -65,22 +65,63 @@ void SubtitleGridModel::setVideoViewModel(VideoViewModel *video) {
 }
 
 void SubtitleGridModel::rebuildRows() {
-    rows_.clear();
-    if (!file_)
-        return;
-    rows_.reserve(file_->Events.size());
-    for (auto &line : file_->Events)
-        rows_.push_back(&line);
+    all_rows_.clear();
+    if (file_) {
+        all_rows_.reserve(file_->Events.size());
+        for (auto &line : file_->Events)
+            all_rows_.push_back(&line);
+    }
+    rebuildFolds();
+}
+
+void SubtitleGridModel::rebuildFolds() {
+    if (file_)
+        folds_.rebuild(*file_, all_rows_);
+    folds_.buildMappings(visible_to_doc_, doc_to_visible_);
+}
+
+void SubtitleGridModel::moveActiveToVisibleFold() {
+    const int visible = folds_.visibleRepresentative(active_row_);
+    if (visible >= 0 && visible != active_row_) {
+        active_row_ = visible;
+        anchor_row_ = visible;
+        selected_rows_.insert(visible);
+    }
+}
+
+void SubtitleGridModel::refreshFoldVisibility() {
+    const int previous = active_row_;
+    const int oldCount = selectionCount();
+    beginResetModel();
+    rebuildFolds();
+    moveActiveToVisibleFold();
+    endResetModel();
+    emit foldsChanged();
+    emit selectionHasFoldsChanged();
+    if (selectionCount() != oldCount)
+        emit selectionCountChanged();
+    emitActiveChanged(previous);
 }
 
 void SubtitleGridModel::emitSelectionChanged() {
-    if (rows_.empty())
+    if (rowCount())
+        emit dataChanged(index(0), index(rowCount() - 1), {SelectedRole});
+    emit selectionHasFoldsChanged();
+}
+
+void SubtitleGridModel::emitActiveChanged(int previous) {
+    if (previous == active_row_)
         return;
-    emit dataChanged(index(0), index(int(rows_.size()) - 1), {SelectedRole});
+    for (int docRow : {previous, active_row_}) {
+        const int visible = visibleRowForDocRow(docRow);
+        if (visible >= 0)
+            emit dataChanged(index(visible), index(visible), {ActiveRole});
+    }
+    emit activeRowChanged();
 }
 
 void SubtitleGridModel::sanitizeSelection() {
-    const int count = int(rows_.size());
+    const int count = int(all_rows_.size());
 
     QSet<int> selection;
     for (int row : selected_rows_) {
@@ -91,11 +132,7 @@ void SubtitleGridModel::sanitizeSelection() {
     if (selection.isEmpty() && count > 0)
         selection.insert(active_row_ >= 0 && active_row_ < count ? active_row_ : 0);
 
-    if (selection != selected_rows_) {
-        selected_rows_ = selection;
-        emit selectionCountChanged();
-        emitSelectionChanged();
-    }
+    selected_rows_ = std::move(selection);
 
     if (anchor_row_ < 0 || anchor_row_ >= count)
         anchor_row_ = active_row_;
@@ -104,12 +141,10 @@ void SubtitleGridModel::sanitizeSelection() {
 void SubtitleGridModel::refresh() {
     beginResetModel();
     rebuildRows();
-    endResetModel();
-    emit lineCountChanged();
 
     // Non-empty models start with the first line selected, empty ones have no
     // selection. Emit only on an actual change so listeners see a stable state.
-    const int new_active = rows_.empty() ? -1 : 0;
+    const int new_active = all_rows_.empty() ? -1 : 0;
     const bool active_changed = active_row_ != new_active;
 
     active_row_ = new_active;
@@ -117,41 +152,37 @@ void SubtitleGridModel::refresh() {
     if (new_active >= 0)
         selected_rows_.insert(new_active);
     anchor_row_ = new_active;
-
+    endResetModel();
+    emit lineCountChanged();
+    emit foldsChanged();
     emit selectionCountChanged();
-    emitSelectionChanged();
+    emit selectionHasFoldsChanged();
     if (active_changed)
         emit activeRowChanged();
 }
 
 void SubtitleGridModel::refreshPreservingActiveRow() {
     const int previous_active = active_row_;
-
+    const int previous_count = selectionCount();
     beginResetModel();
     rebuildRows();
+    active_row_ = all_rows_.empty() ? -1 : std::clamp(previous_active, 0, lineCount() - 1);
+    moveActiveToVisibleFold();
+    sanitizeSelection();
     endResetModel();
     emit lineCountChanged();
-
-    int new_active;
-    if (rows_.empty())
-        new_active = -1;
-    else
-        new_active = std::clamp(previous_active, 0, int(rows_.size()) - 1);
-
-    if (active_row_ != new_active) {
-        active_row_ = new_active;
-        emit activeRowChanged();
-    }
-
-    // The rows moved (or disappeared) under the selection: clamp it.
-    sanitizeSelection();
+    emit foldsChanged();
+    emit selectionHasFoldsChanged();
+    if (previous_count != selectionCount())
+        emit selectionCountChanged();
+    emitActiveChanged(previous_active);
 }
 
 int SubtitleGridModel::indexOf(const AssDialogue *line) const {
     if (!line)
         return -1;
-    const auto it = std::find(rows_.begin(), rows_.end(), line);
-    return it == rows_.end() ? -1 : int(it - rows_.begin());
+    const auto it = std::find(all_rows_.begin(), all_rows_.end(), line);
+    return it == all_rows_.end() ? -1 : int(it - all_rows_.begin());
 }
 
 void SubtitleGridModel::onFileCommitted(int type, const AssDialogue *single_line) {
@@ -174,7 +205,10 @@ void SubtitleGridModel::onFileCommitted(int type, const AssDialogue *single_line
         }
         active_row_ = indexOf(active);
         anchor_row_ = indexOf(anchor);
+        moveActiveToVisibleFold();
         endResetModel();
+        emit foldsChanged();
+        emit selectionHasFoldsChanged();
         if (old_count != selectionCount())
             emit selectionCountChanged();
         if (old_active != active_row_)
@@ -190,18 +224,24 @@ void SubtitleGridModel::onFileCommitted(int type, const AssDialogue *single_line
         return;
     }
 
+    if (type & AssFile::COMMIT_FOLD) {
+        refreshFoldVisibility();
+        if ((type & AssFile::COMMIT_DIAG_FULL) == 0)
+            return;
+    }
+
     // A single line's content changed: touch just that row. The fast path is
     // the currently selected line (the common case for the edit box).
     if (single_line) {
         int row = -1;
-        if (active_row_ >= 0 && active_row_ < int(rows_.size())
-            && rows_[size_t(active_row_)] == single_line)
+        if (active_row_ >= 0 && active_row_ < int(all_rows_.size())
+            && all_rows_[size_t(active_row_)] == single_line)
             row = active_row_;
         else
             row = indexOf(single_line);
 
         if (row >= 0) {
-            emit dataChanged(index(row), index(row));
+            notifyRowUpdated(row);
             return;
         }
     }
@@ -215,12 +255,12 @@ void SubtitleGridModel::onFileCommitted(int type, const AssDialogue *single_line
     // edit of a multi-row selection, replace-all): repaint the rows in place.
     // A full model reset here would also reset the edit box's coalescing state
     // and turn one typed batch edit into one undo step per keystroke.
-    if (!rows_.empty())
-        emit dataChanged(index(0), index(int(rows_.size()) - 1));
+    if (rowCount())
+        emit dataChanged(index(0), index(rowCount() - 1));
 }
 
 void SubtitleGridModel::onRestored() {
-    // swap() replaced every AssDialogue in the file; rows_ is dangling.
+    // swap() replaced every AssDialogue in the file; all_rows_ is dangling.
     refreshPreservingActiveRow();
 }
 
@@ -233,7 +273,112 @@ int SubtitleGridModel::selectionCount() const {
 }
 
 int SubtitleGridModel::lineCount() const {
-    return int(rows_.size());
+    return int(all_rows_.size());
+}
+
+int SubtitleGridModel::visibleRowForDocRow(int docRow) const {
+    return docRow >= 0 && docRow < int(doc_to_visible_.size()) ? doc_to_visible_[docRow] : -1;
+}
+
+int SubtitleGridModel::docRowForVisibleRow(int visibleRow) const {
+    return visibleRow >= 0 && visibleRow < rowCount() ? visible_to_doc_[visibleRow] : -1;
+}
+
+void SubtitleGridModel::selectRangeVisible(int visibleRow) {
+    // Like wx, select the document interval between the two visible rows.
+    if (const int doc = docRowForVisibleRow(visibleRow); doc >= 0)
+        selectRange(doc);
+}
+
+void SubtitleGridModel::restoreActiveRow(int docRow) {
+    if (const int visible = folds_.visibleRepresentative(docRow); visible >= 0)
+        selectOnly(visible);
+}
+
+bool SubtitleGridModel::hasFolds() const {
+    return folds_.hasMarkers();
+}
+
+bool SubtitleGridModel::selectionHasFolds() const {
+    return std::any_of(selected_rows_.begin(), selected_rows_.end(), [this](int doc) {
+        const auto *row = folds_.row(doc);
+        return row && row->innermost >= 0;
+    });
+}
+
+std::vector<int> SubtitleGridModel::selectedFoldIndices() const {
+    std::vector<int> result;
+    for (int doc : selected_rows_) {
+        if (const auto *row = folds_.row(doc); row && row->innermost >= 0)
+            result.push_back(row->innermost);
+    }
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
+void SubtitleGridModel::commitFoldChange(const char *description) {
+    aegisub_qt::commit(file_, description, AssFile::COMMIT_FOLD);
+}
+
+void SubtitleGridModel::ensureRowVisible(int docRow) {
+    if (!file_ || !dialogueAt(docRow) || visibleRowForDocRow(docRow) >= 0)
+        return;
+    std::vector<int> targets;
+    // A nested opener is itself visible when only its own fold is closed.
+    for (int index = folds_.row(docRow)->parent; const auto *fold = folds_.fold(index); index = fold->parent) {
+        if (fold->collapsed)
+            targets.push_back(index);
+    }
+    if (folds_.setCollapsed(*file_, targets, false))
+        commitFoldChange("Open folds");
+}
+
+bool SubtitleGridModel::createFoldFromSelection() {
+    if (!file_ || selectionCount() < 2)
+        return false;
+    const auto first = *std::min_element(selected_rows_.begin(), selected_rows_.end());
+    const auto last = *std::max_element(selected_rows_.begin(), selected_rows_.end());
+    const bool changed = folds_.create(*file_, first, last);
+    // Native Create selects the first endpoint even when the candidate is rejected.
+    selectOnly(first);
+    if (changed)
+        commitFoldChange("Add fold");
+    return changed;
+}
+
+void SubtitleGridModel::toggleFolds(const std::vector<int> &indices) {
+    if (file_ && folds_.toggleCollapsed(*file_, indices))
+        commitFoldChange("Toggle folds");
+}
+
+void SubtitleGridModel::toggleFoldsForSelection() {
+    toggleFolds(selectedFoldIndices());
+}
+
+void SubtitleGridModel::toggleFoldAtDocRow(int docRow) {
+    if (const auto *row = folds_.row(docRow); row && row->innermost >= 0)
+        toggleFolds({row->innermost});
+}
+
+void SubtitleGridModel::clearFoldsForSelection() {
+    if (file_ && folds_.clearAtRows(*file_, {selected_rows_.begin(), selected_rows_.end()}))
+        commitFoldChange("Clear folds");
+}
+
+void SubtitleGridModel::openAllFolds() {
+    if (file_ && folds_.setAllCollapsed(*file_, false))
+        commitFoldChange("Open all folds");
+}
+
+void SubtitleGridModel::closeAllFolds() {
+    if (file_ && folds_.setAllCollapsed(*file_, true))
+        commitFoldChange("Close all folds");
+}
+
+void SubtitleGridModel::clearAllFolds() {
+    if (file_ && folds_.clearAll(*file_))
+        commitFoldChange("Clear all folds");
 }
 
 const QSet<int> &SubtitleGridModel::selectedRows() const {
@@ -247,30 +392,29 @@ QList<int> SubtitleGridModel::sortedSelectedRows() const {
 }
 
 AssDialogue *SubtitleGridModel::getActiveDialogue() {
-    if (active_row_ < 0 || active_row_ >= int(rows_.size()))
+    if (active_row_ < 0 || active_row_ >= int(all_rows_.size()))
         return nullptr;
-    return rows_[size_t(active_row_)];
+    return all_rows_[size_t(active_row_)];
 }
 
 AssDialogue *SubtitleGridModel::dialogueAt(int row) const {
-    if (row < 0 || row >= int(rows_.size()))
+    if (row < 0 || row >= int(all_rows_.size()))
         return nullptr;
-    return rows_[size_t(row)];
+    return all_rows_[size_t(row)];
 }
 
 void SubtitleGridModel::applySelection(const QSet<int> &selection, int active) {
     const bool selection_changed = selected_rows_ != selection;
     selected_rows_ = selection;
 
-    const bool active_changed = active_row_ != active;
+    const int previous = active_row_;
     active_row_ = active;
 
     if (selection_changed) {
         emit selectionCountChanged();
         emitSelectionChanged();
     }
-    if (active_changed)
-        emit activeRowChanged();
+    emitActiveChanged(previous);
 }
 
 void SubtitleGridModel::setAutomationSelection(const QList<int> &rows, int active) {
@@ -279,6 +423,7 @@ void SubtitleGridModel::setAutomationSelection(const QList<int> &rows, int activ
         if (row >= 0 && row < lineCount()) selection.insert(row);
     if (active < 0 || active >= lineCount())
         active = selection.isEmpty() ? (lineCount() ? 0 : -1) : *std::min_element(selection.begin(), selection.end());
+    ensureRowVisible(active);
     if (active >= 0) selection.insert(active);
     anchor_row_ = active;
     applySelection(selection, active);
@@ -289,6 +434,7 @@ void SubtitleGridModel::setToolSelection(QSet<int> rows) {
     int active = active_row_;
     if (!rows.isEmpty() && !rows.contains(active))
         active = *std::min_element(rows.cbegin(), rows.cend());
+    ensureRowVisible(active);
     anchor_row_ = active;
     applySelection(rows, active);
 }
@@ -302,13 +448,14 @@ void SubtitleGridModel::selectOnly(int row) {
 }
 
 void SubtitleGridModel::selectSingle(int row) {
-    if (row < -1 || row >= int(rows_.size()))
+    if (row < -1 || row >= int(all_rows_.size()))
         row = -1;
+    ensureRowVisible(row);
     selectOnly(row);
 }
 
 void SubtitleGridModel::toggleSelect(int row) {
-    if (row < 0 || row >= int(rows_.size()))
+    if (row < 0 || row >= int(all_rows_.size()))
         return;
 
     QSet<int> selection = selected_rows_;
@@ -325,16 +472,18 @@ void SubtitleGridModel::toggleSelect(int row) {
     if (!selection.contains(active))
         active = *std::min_element(selection.begin(), selection.end());
 
+    ensureRowVisible(active);
     anchor_row_ = row;
     applySelection(selection, active);
 }
 
 void SubtitleGridModel::selectRange(int row) {
-    if (rows_.empty())
+    if (all_rows_.empty())
         return;
 
-    row = std::clamp(row, 0, int(rows_.size()) - 1);
-    const int anchor = (anchor_row_ >= 0 && anchor_row_ < int(rows_.size())) ? anchor_row_ : row;
+    row = std::clamp(row, 0, int(all_rows_.size()) - 1);
+    ensureRowVisible(row);
+    const int anchor = (anchor_row_ >= 0 && anchor_row_ < int(all_rows_.size())) ? anchor_row_ : row;
     const int lo = std::min(anchor, row);
     const int hi = std::max(anchor, row);
 
@@ -349,7 +498,7 @@ void SubtitleGridModel::selectRange(int row) {
 }
 
 void SubtitleGridModel::selectAll() {
-    const int count = int(rows_.size());
+    const int count = int(all_rows_.size());
     if (count == 0)
         return;
 
@@ -364,27 +513,20 @@ void SubtitleGridModel::selectAll() {
 }
 
 void SubtitleGridModel::setActiveRow(int row) {
-    if (row < -1 || row >= int(rows_.size()))
+    if (row < -1 || row >= int(all_rows_.size()))
         row = -1;
 
-    // Moving the active row with the keyboard collapses the selection to it.
-    anchor_row_ = row;
-    QSet<int> selection;
-    if (row >= 0)
-        selection.insert(row);
-    applySelection(selection, row);
+    selectSingle(row);
 }
 
 void SubtitleGridModel::notifyRowUpdated(int row) {
-    if (row < 0 || row >= int(rows_.size()))
-        return;
-    emit dataChanged(index(row), index(row));
+    const int visible = visibleRowForDocRow(row);
+    if (visible >= 0)
+        emit dataChanged(index(visible), index(visible));
 }
 
 int SubtitleGridModel::rowCount(const QModelIndex &parent) const {
-    if (parent.isValid())
-        return 0;
-    return int(rows_.size());
+    return parent.isValid() ? 0 : int(visible_to_doc_.size());
 }
 
 void SubtitleGridModel::setTagDisplayMode(int mode) {
@@ -405,8 +547,8 @@ void SubtitleGridModel::setHideOverridesChar(const QString &marker) {
 }
 
 void SubtitleGridModel::notifyDisplayTextChanged() {
-    if (!rows_.empty())
-        emit dataChanged(index(0), index(lineCount() - 1), {DisplayTextRole});
+    if (rowCount())
+        emit dataChanged(index(0), index(rowCount() - 1), {DisplayTextRole});
 }
 
 QString SubtitleGridModel::formatDisplayText(const QString &text) const {
@@ -431,13 +573,32 @@ QString SubtitleGridModel::formatDisplayText(const QString &text) const {
 }
 
 QVariant SubtitleGridModel::data(const QModelIndex &index, int role) const {
-    if (!index.isValid() || index.row() < 0 || index.row() >= int(rows_.size()))
+    const int doc = index.isValid() ? docRowForVisibleRow(index.row()) : -1;
+    const AssDialogue *line = dialogueAt(doc);
+    if (!line)
         return {};
-
-    const AssDialogue *line = rows_[size_t(index.row())];
     switch (role) {
         case RowNumberRole:
-            return index.row() + 1;
+            return doc + 1;
+        case DocRowRole:
+            return doc;
+        case ActiveRole:
+            return doc == active_row_;
+        case FoldRole:
+        case FoldDepthRole:
+        case FoldedHiddenCountRole: {
+            const auto *row = folds_.row(doc);
+            if (!row)
+                return 0;
+            if (role == FoldDepthRole)
+                return row->depth - int(row->start);
+            const auto *fold = row->start ? folds_.fold(row->innermost) : nullptr;
+            if (role == FoldedHiddenCountRole)
+                return fold && fold->collapsed ? fold->end - fold->start : 0;
+            if (fold)
+                return fold->collapsed ? StartCollapsed : StartOpen;
+            return row->end ? EndFold : row->parent >= 0 ? InsideFold : NoFold;
+        }
         case LayerRole:
             return line->Layer;
         case StartTimeRole:
@@ -457,7 +618,7 @@ QVariant SubtitleGridModel::data(const QModelIndex &index, int role) const {
         case CommentRole:
             return line->Comment;
         case SelectedRole:
-            return selected_rows_.contains(index.row());
+            return selected_rows_.contains(doc);
         default:
             return {};
     }
@@ -476,6 +637,11 @@ QHash<int, QByteArray> SubtitleGridModel::roleNames() const {
         { DisplayTextRole, "displayText" },
         { CommentRole, "isComment" },
         { SelectedRole, "isSelected" },
+        { DocRowRole, "docRow" },
+        { ActiveRole, "isActive" },
+        { FoldRole, "foldRole" },
+        { FoldDepthRole, "foldDepth" },
+        { FoldedHiddenCountRole, "foldedHiddenCount" },
     };
 }
 
@@ -529,11 +695,11 @@ int SubtitleGridModel::insertAtVideoTime(bool after) {
 int SubtitleGridModel::insertBefore(int row) {
     if (!file_)
         return -1;
-    if (rows_.empty())
+    if (all_rows_.empty())
         return appendDefaultLine();
 
-    row = std::clamp(row, 0, int(rows_.size()) - 1);
-    AssDialogue *current = rows_[size_t(row)];
+    row = std::clamp(row, 0, int(all_rows_.size()) - 1);
+    AssDialogue *current = all_rows_[size_t(row)];
 
     auto *line = new AssDialogue;
     line->Style = current->Style;
@@ -558,11 +724,11 @@ int SubtitleGridModel::insertBefore(int row) {
 int SubtitleGridModel::insertAfter(int row) {
     if (!file_)
         return -1;
-    if (rows_.empty())
+    if (all_rows_.empty())
         return appendDefaultLine();
 
-    row = std::clamp(row, 0, int(rows_.size()) - 1);
-    AssDialogue *current = rows_[size_t(row)];
+    row = std::clamp(row, 0, int(all_rows_.size()) - 1);
+    AssDialogue *current = all_rows_[size_t(row)];
 
     auto *line = new AssDialogue;
     line->Style = current->Style;
@@ -584,10 +750,10 @@ int SubtitleGridModel::insertAfter(int row) {
 }
 
 int SubtitleGridModel::duplicateRow(int row) {
-    if (!file_ || row < 0 || row >= int(rows_.size()))
+    if (!file_ || row < 0 || row >= int(all_rows_.size()))
         return -1;
 
-    AssDialogue *source = rows_[size_t(row)];
+    AssDialogue *source = all_rows_[size_t(row)];
     // Same as edit/line/duplicate: a plain deep copy inserted right after.
     auto *copy = new AssDialogue(*source);
 
@@ -599,7 +765,7 @@ int SubtitleGridModel::duplicateRow(int row) {
 }
 
 int SubtitleGridModel::duplicateSelectedRows() {
-    if (!file_ || rows_.empty())
+    if (!file_ || all_rows_.empty())
         return 0;
 
     QList<int> selected = sortedSelectedRows();
@@ -613,8 +779,8 @@ int SubtitleGridModel::duplicateSelectedRows() {
     // AssDialogue pointers do not.
     std::vector<AssDialogue *> targets;
     for (int row : selected) {
-        if (row >= 0 && row < int(rows_.size()))
-            targets.push_back(rows_[size_t(row)]);
+        if (row >= 0 && row < int(all_rows_.size()))
+            targets.push_back(all_rows_[size_t(row)]);
     }
     if (targets.empty())
         return 0;
@@ -647,11 +813,11 @@ int SubtitleGridModel::duplicateSelectedRows() {
 }
 
 void SubtitleGridModel::deleteRow(int row) {
-    if (!file_ || rows_.empty())
+    if (!file_ || all_rows_.empty())
         return;
 
-    row = std::clamp(row, 0, int(rows_.size()) - 1);
-    AssDialogue *target = rows_[size_t(row)];
+    row = std::clamp(row, 0, int(all_rows_.size()) - 1);
+    AssDialogue *target = all_rows_[size_t(row)];
 
     // Unlink first, then free: the intrusive list does not own the line.
     // Anything that still points at it is fixed up by the model reset that the
@@ -668,9 +834,9 @@ void SubtitleGridModel::deleteRow(int row) {
 
     commitRowChange(QStringLiteral("Delete line"));
 
-    // Commit rebuilt rows_; land on the line which took the deleted one's place,
+    // Commit rebuilt all_rows_; land on the line which took the deleted one's place,
     // or on the previous line when the last row went away.
-    selectOnly(rows_.empty() ? -1 : std::min(row, int(rows_.size()) - 1));
+    selectOnly(all_rows_.empty() ? -1 : std::min(row, int(all_rows_.size()) - 1));
 }
 
 int SubtitleGridModel::deleteSelectedRows() {
@@ -678,7 +844,7 @@ int SubtitleGridModel::deleteSelectedRows() {
 }
 
 int SubtitleGridModel::deleteSelectedRows(const QString &description) {
-    if (!file_ || rows_.empty())
+    if (!file_ || all_rows_.empty())
         return 0;
 
     QList<int> selected = sortedSelectedRows();
@@ -690,8 +856,8 @@ int SubtitleGridModel::deleteSelectedRows(const QString &description) {
 
     std::vector<AssDialogue *> targets;
     for (int row : selected) {
-        if (row >= 0 && row < int(rows_.size()))
-            targets.push_back(rows_[size_t(row)]);
+        if (row >= 0 && row < int(all_rows_.size()))
+            targets.push_back(all_rows_[size_t(row)]);
     }
     if (targets.empty())
         return 0;
@@ -949,7 +1115,7 @@ void SubtitleGridModel::sortAllLines(int field) {
     const auto compare = lineComparator(field);
     if (!file_ || !compare || lineCount() < 2)
         return;
-    if (std::is_sorted(rows_.begin(), rows_.end(), [compare](auto *left, auto *right) {
+    if (std::is_sorted(all_rows_.begin(), all_rows_.end(), [compare](auto *left, auto *right) {
             return compare(*left, *right);
         }))
         return;
@@ -1024,7 +1190,7 @@ void SubtitleGridModel::moveSelectedRows(int delta) {
         return;
 
     bool moved = false;
-    auto order = rows_;
+    auto order = all_rows_;
     const auto selected = selectedDialogues();
     const int step = delta < 0 ? 1 : -1;
     for (int row = delta < 0 ? 1 : lineCount() - 2;

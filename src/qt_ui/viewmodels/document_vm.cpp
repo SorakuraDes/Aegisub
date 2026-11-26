@@ -33,6 +33,7 @@
 
 #include <exception>
 #include <string>
+#include <unordered_set>
 
 namespace {
 
@@ -63,6 +64,18 @@ QString localPath(const std::string &path, const QDir &base) {
     }
     if (result.startsWith(QLatin1Char('?'))) return {};
     return QDir::cleanPath(base.absoluteFilePath(result));
+}
+
+// Omit obsolete fold values from the save copy, not from the undo snapshots.
+void pruneUnusedFolds(AssFile &file) {
+    std::unordered_set<uint32_t> referenced;
+    for (const auto &line : file.Events)
+        for (auto id : line.ExtradataIds.get())
+            referenced.insert(id);
+    auto &entries = file.Extradata;
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const auto &entry) {
+        return entry.key == "_aegi_folddata" && !referenced.count(entry.id);
+    }), entries.end());
 }
 
 } // namespace
@@ -135,6 +148,7 @@ void DocumentViewModel::writeAutosave() {
         AssFile copy(*file_);
         copy.Properties = file_->Properties;
         updateSaveProperties(copy, path);
+        pruneUnusedFolds(copy);
         format.WriteFile(&copy, aegisub_qt::ToNativePath(path), agi::vfr::Framerate(), "UTF-8");
         autosave_pending_ = false;
         qInfo() << "[autosave] saved" << path;
@@ -362,7 +376,7 @@ bool DocumentViewModel::loadFromPath(const QString &path) {
         if (gridModel_) {
             gridModel_->refresh();
             const int activeRow = file_->Properties.active_row;
-            if (restoreUi && activeRow >= 0 && activeRow < gridModel_->rowCount()) gridModel_->setActiveRow(activeRow);
+            if (restoreUi) gridModel_->restoreActiveRow(activeRow);
         }
         // The freshly loaded contents are the clean baseline: undo stops here.
         if (undoManager_)
@@ -413,6 +427,7 @@ bool DocumentViewModel::saveToPath(const QString &path) {
             AssFile copy(*file_);
             copy.Properties = file_->Properties;
             updateSaveProperties(copy, path);
+            pruneUnusedFolds(copy);
             format.WriteFile(&copy, aegisub_qt::ToNativePath(path), agi::vfr::Framerate(), "UTF-8");
         }
         setFilePath(path);

@@ -215,6 +215,7 @@ int runStage16BIntegrationTest(QQmlApplicationEngine &engine);
 int runStage17AIntegrationTest(QQmlApplicationEngine &engine, bool restart);
 int RunStage17BIntegrationTest(QQmlApplicationEngine &, DocumentViewModel &, FontsCollectorViewModel &);
 int RunStage17BRestartCheck(FontsCollectorViewModel &);
+int runStage17CIntegrationTest(QQmlApplicationEngine &engine);
 #endif
 
 int main(int argc, char *argv[]) {
@@ -231,6 +232,7 @@ int main(int argc, char *argv[]) {
     bool stage17ARestart = false;
     bool stage17BTest = false;
     bool stage17BRestart = false;
+    bool stage17CTest = false;
     for (int i = 1; i < argc; ++i) {
         reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
         automationTest |= QByteArray(argv[i]) == "--stage16a";
@@ -239,6 +241,7 @@ int main(int argc, char *argv[]) {
         stage17ARestart |= QByteArray(argv[i]) == "--stage17a-restart";
         stage17BTest |= QByteArray(argv[i]) == "--stage17b";
         stage17BRestart |= QByteArray(argv[i]) == "--stage17b-restart";
+        stage17CTest |= QByteArray(argv[i]) == "--stage17c";
     }
     reloadTest |= stage17ARestart || stage17BRestart;
     QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
@@ -475,6 +478,7 @@ int main(int argc, char *argv[]) {
     });
 
 #ifdef AEGISUB_STAGE15_TEST
+    if (stage17CTest) return runStage17CIntegrationTest(engine);
     if (stage17BRestart) return RunStage17BRestartCheck(fontsCollectorVM);
     if (stage17BTest) return RunStage17BIntegrationTest(engine, documentVM, fontsCollectorVM);
     if (stage17ATest || stage17ARestart) return runStage17AIntegrationTest(engine, stage17ARestart);

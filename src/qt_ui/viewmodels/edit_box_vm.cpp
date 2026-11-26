@@ -234,7 +234,7 @@ void EditBoxViewModel::commitAndNextLine() {
     resetCoalescing();
 
     const int row = model_->activeRow();
-    if (row + 1 < model_->rowCount())
+    if (row + 1 < model_->lineCount())
         model_->setActiveRow(row + 1);
     else
         model_->insertAfter(row);

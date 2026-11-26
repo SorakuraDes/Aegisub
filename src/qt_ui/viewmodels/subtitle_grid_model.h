@@ -3,6 +3,7 @@
 // agi::signal has members named `slots`, which Qt's `#define slots public`
 // would mangle; parse it before any Qt header.
 #include <libaegisub/signal.h>
+#include "../fold_state.h"
 
 #include <QAbstractListModel>
 #include <QList>
@@ -29,12 +30,14 @@ class VideoViewModel;
 /// set of additionally selected rows for batch operations.
 class SubtitleGridModel final : public QAbstractListModel {
     Q_OBJECT
-    /// Currently selected (focused) row (-1 when nothing is selected).
+    /// Focused document row (-1 when nothing is selected).
     Q_PROPERTY(int activeRow READ activeRow WRITE setActiveRow NOTIFY activeRowChanged)
     /// Number of rows in the selection (never 0 while the file has lines).
     Q_PROPERTY(int selectionCount READ selectionCount NOTIFY selectionCountChanged)
     /// Number of dialogue lines (for the status bar).
     Q_PROPERTY(int lineCount READ lineCount NOTIFY lineCountChanged)
+    Q_PROPERTY(bool hasFolds READ hasFolds NOTIFY foldsChanged)
+    Q_PROPERTY(bool selectionHasFolds READ selectionHasFolds NOTIFY selectionHasFoldsChanged)
     Q_PROPERTY(int tagDisplayMode READ tagDisplayMode WRITE setTagDisplayMode NOTIFY tagDisplayModeChanged)
     Q_PROPERTY(QString hideOverridesChar READ hideOverridesChar WRITE setHideOverridesChar NOTIFY hideOverridesCharChanged)
 
@@ -51,8 +54,14 @@ public:
         CommentRole,
         SelectedRole,
         DisplayTextRole,
+        DocRowRole,
+        ActiveRole,
+        FoldRole,
+        FoldDepthRole,
+        FoldedHiddenCountRole,
     };
     Q_ENUM(Roles)
+    enum FoldDisplay { NoFold, StartOpen, StartCollapsed, InsideFold, EndFold };
 
     enum TagDisplayMode { ShowTags, SimplifyTags, HideTags };
     Q_ENUM(TagDisplayMode)
@@ -76,6 +85,21 @@ public:
     int selectionCount() const;
 
     int lineCount() const;
+    bool hasFolds() const;
+    bool selectionHasFolds() const;
+    Q_INVOKABLE int visibleRowForDocRow(int docRow) const;
+    Q_INVOKABLE int docRowForVisibleRow(int visibleRow) const;
+    Q_INVOKABLE void selectRangeVisible(int visibleRow);
+    Q_INVOKABLE void ensureRowVisible(int docRow);
+    void restoreActiveRow(int docRow);
+
+    Q_INVOKABLE bool createFoldFromSelection();
+    Q_INVOKABLE void toggleFoldsForSelection();
+    Q_INVOKABLE void toggleFoldAtDocRow(int docRow);
+    Q_INVOKABLE void clearFoldsForSelection();
+    Q_INVOKABLE void openAllFolds();
+    Q_INVOKABLE void closeAllFolds();
+    Q_INVOKABLE void clearAllFolds();
     int tagDisplayMode() const { return tag_display_mode_; }
     void setTagDisplayMode(int mode);
     QString hideOverridesChar() const { return hide_overrides_char_; }
@@ -157,6 +181,8 @@ signals:
     void lineCountChanged();
     void tagDisplayModeChanged();
     void hideOverridesCharChanged();
+    void foldsChanged();
+    void selectionHasFoldsChanged();
 
 private:
     void notifyDisplayTextChanged();
@@ -164,6 +190,13 @@ private:
     int tag_display_mode_ = ShowTags;
     QString hide_overrides_char_ = QStringLiteral("\u2600");
     void rebuildRows();
+    void rebuildFolds();
+    void refreshFoldVisibility();
+    void emitActiveChanged(int previous);
+    void moveActiveToVisibleFold();
+    std::vector<int> selectedFoldIndices() const;
+    void toggleFolds(const std::vector<int> &folds);
+    void commitFoldChange(const char *description);
     int indexOf(const AssDialogue *line) const;
     /// Rebuild the row index but keep the selected row (clamped on shrink).
     void refreshPreservingActiveRow();
@@ -191,13 +224,16 @@ private:
     /// AssFile::AnnounceCommit slot: a commit changed the file.
     void onFileCommitted(int type, const AssDialogue *single_line);
     /// UndoManager::restored slot: a snapshot was swapped into the file, so
-    /// every AssDialogue pointer in rows_ is dangling.
+    /// every AssDialogue pointer in all_rows_ is dangling.
     void onRestored();
 
     AssFile *file_;
     UndoManager *undo_manager_;
     QPointer<VideoViewModel> video_vm_;
-    std::vector<AssDialogue *> rows_;
+    std::vector<AssDialogue *> all_rows_;
+    std::vector<int> visible_to_doc_;
+    std::vector<int> doc_to_visible_;
+    FoldState folds_;
     int active_row_ = -1;
     QSet<int> selected_rows_;
     /// Row a Shift+Click range starts from.

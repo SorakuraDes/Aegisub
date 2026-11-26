@@ -186,7 +186,8 @@ bool translatedMenus(QQuickWindow *window) {
     };
     const QStringList direct{QStringLiteral("样式管理器…"), QStringLiteral("重设分辨率…"), QStringLiteral("插入行"),
         QStringLiteral("重复行"), QStringLiteral("以当前帧前分割行"), QStringLiteral("以当前帧后分割行"),
-        QStringLiteral("删除行"), QStringLiteral("合并行"), QStringLiteral("排序所有行"),
+        QStringLiteral("删除行"), QStringLiteral("合并行"), QStringLiteral("展开所有折叠"),
+        QStringLiteral("收起所有折叠"), QStringLiteral("清除所有折叠"), QStringLiteral("排序所有行"),
         QStringLiteral("排序选择行"), QStringLiteral("互换行"), QStringLiteral("选择多行…"), QStringLiteral("全选")};
     if (labels(subtitle) != direct) return false;
 
@@ -205,7 +206,7 @@ bool translatedMenus(QQuickWindow *window) {
                            QStringLiteral("说话人"), QStringLiteral("特效"), QStringLiteral("文本"),
                            QStringLiteral("去除标签的文本"), QStringLiteral("层级")};
     return labels(submenu(direct[2])) == insert && labels(submenu(direct[7])) == join &&
-           labels(submenu(direct[8])) == sort && labels(submenu(direct[9])) == sort;
+           labels(submenu(QStringLiteral("排序所有行"))) == sort && labels(submenu(QStringLiteral("排序选择行"))) == sort;
 }
 
 // Invoke the production menu item's signal without relying on the platform's popup focus.

@@ -179,7 +179,7 @@ QList<int> SearchViewModel::candidateRows() const {
     if (in_selection_only_ && gridModel_->selectionCount() > 0)
         return gridModel_->sortedSelectedRows();
 
-    const int count = gridModel_->rowCount();
+    const int count = gridModel_->lineCount();
     for (int i = 0; i < count; ++i)
         rows << i;
     return rows;

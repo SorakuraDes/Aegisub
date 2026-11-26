@@ -573,6 +573,10 @@ ApplicationWindow {
                 ShortcutMenuItem { text: i18n.t("Keep First"); enabled: mainWindow.canJoin; onTriggered: gridModel.joinSelectedRows(false) }
             }
             MenuSeparator {}
+            ShortcutMenuItem { text: i18n.t("Open all Folds"); enabled: gridModel.hasFolds; onTriggered: gridModel.openAllFolds() }
+            ShortcutMenuItem { text: i18n.t("Close all Folds"); enabled: gridModel.hasFolds; onTriggered: gridModel.closeAllFolds() }
+            ShortcutMenuItem { text: i18n.t("Clear all Folds"); enabled: gridModel.hasFolds; onTriggered: gridModel.clearAllFolds() }
+            MenuSeparator {}
             Menu {
                 title: i18n.t("Sort All Lines")
                 width: 210

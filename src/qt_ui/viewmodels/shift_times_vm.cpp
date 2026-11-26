@@ -148,7 +148,7 @@ int ShiftTimesViewModel::applyShift() {
     // both the "all rows" and the "selection onward" scopes walk it instead of
     // the intrusive list.
     std::vector<AssDialogue *> lines;
-    const int row_count = grid_model_->rowCount();
+    const int row_count = grid_model_->lineCount();
     switch (affect_scope_) {
         case 1: {
             // Selected rows only.

@@ -4,6 +4,16 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 17C：ASS 行折叠与双索引网格
+
+基线 `feature@9427263ce`。折叠存储仍使用原版 `[Aegisub Extradata]` 与对话行 `{=N}` 引用；`_aegi_folddata` 值为 `side;collapsed;id`，由原版 ASS 读写器处理磁盘格式。
+
+- [折叠引擎](../src/qt_ui/fold_state.cpp)通过端点栈验证严格嵌套，交叉时沿用原版的先闭合配对规则，起点决定收起状态。同 ID 的后续完整配对可独立操作。无效或孤立标记不参与可见性，普通加载不会改写它们；清除命令移除相应折叠引用，不动其他 Extradata。可见起点下方的隐藏范围含终点。
+- [网格模型](../src/qt_ui/viewmodels/subtitle_grid_model.cpp)以完整文档行维护 `lineCount`、`activeRow` 和选区；只有 Qt 模型的 `rowCount()` 和网格滚动使用可见索引。`#` 始终显示文档行号。Shift+点击以两条可见端点选取连续文档区间。查找或显式定位到隐藏行时，一次提交展开其所有收起祖先；打开 ASS 恢复界面时不改写折叠，若保存的活动行不可见，则定位到可见的祖先起点。收起隐藏活动行时也移到可见起点，保留文档选区。
+- [字幕网格](../src/qt_ui/SubtitleGrid.qml)有主题折叠栏、隐藏行计数、嵌套引导线；右键可创建、切换和清除，网格聚焦时 Enter 切换，EditBox 的 Enter 不受影响。[Subtitle 菜单](../src/qt_ui/Main.qml)提供全开、全关和全部清除。实际修改通过 `COMMIT_FOLD` 单次提交，支持 Ctrl+Z / Ctrl+Y。
+
+验收：`bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe` 与全量双轨均退出 0。集成测试目标默认不构建，先用同一脚本显式构建 `src/qt_ui/qt-stage15-integration-test.exe`，再在 Qt 6.6.3 SDK、离屏软件渲染及隔离 `TEMP/TMP` 下运行 `meson test -C build --no-rebuild -j1 'qt-*'`：**9/9 通过，退出 0**。[Stage 17C 测试](../src/qt_ui/stage17c_integration_test.cpp)覆盖嵌套、无效端点、菜单与网格快捷键、撤销重做、ASS 往返、EditBox、隐藏行查找、排序和删除。设置 `AEGISUB_STAGE17C_SCREENSHOTS` 后可输出深浅主题的完整窗口与网格裁图，本机位于 `.build-tools/stage17c/`。ASS 正常保存和自动保存均只在写出副本中剔除未引用的折叠条目，避免把旧状态写回磁盘。
+
 ## Stage 17B：Windows 字体收集器
 
 基线 `feature@ef71a4403`。File → Fonts Collector... 在 Attachments... 下方，按需打开独立的莫奈主题窗口。支持检查、复制到指定目录、复制到字幕目录（未保存时禁用）、打包 ZIP。沿用 `Tool/Fonts Collector/Action` 和 `Path/Fonts Collector Destination`，支持 `?script`、`?user`、`?data`。
@@ -411,7 +421,7 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 - **Edit 菜单不显示快捷键文本**：Qt Quick Controls 的 `MenuItem` 不渲染 `Action.shortcut` 的文本（Qt Widgets 的 QMenu 才会），所以菜单里只有 `Undo` / `Redo <desc>`，看不到 `Ctrl+Z`/`Ctrl+Y` 提示；快捷键本身由 `main.cpp` 的事件过滤器实现并已验证（要提示得给两个菜单项写自定义 `contentItem`）。
 - **撤销粒度**：快照式 undo 每次提交都深拷贝整个 `AssFile`（1000ms 合并窗口内只保留一份），大文件 + 高频输入时内存/CPU 有开销；栈上限 100 步，保存点被挤出后文档会一直显示「已修改」。
 - **EditBox 仍缺的字段/交互**：没有 `MarginL/MarginR/MarginV` 三个边距、没有时间微调按钮（±10ms/±帧）与「按帧编辑」、没有自动定位到视频时间；`availableStyles` 只来自当前文件的 `[V4+ Styles]`（不读样式库）；新增字段的 UI 文案（`Comment`/`Layer`/`Style`/`Actor`/`Effect`/`Duration`/`chars`）还没进 po，实际显示英文。
-- **网格操作仍有缺口**：已支持插行 / 复制 / 删行 / 多选批量操作（含 Undo/Redo），但键盘范围选择（`Shift+↑/↓`）、拖拽框选、列排序、行折叠、跨行拖动都没做；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 仍是全量 `beginResetModel`，行数很多时每次增删都要整体重绘。
+- **网格操作仍有缺口**：已支持插行 / 复制 / 删行 / 多选批量操作（含 Undo/Redo），但键盘范围选择（`Shift+↑/↓`）、拖拽框选、表头点击排序、跨行拖动都没做；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 仍是全量 `beginResetModel`，行数很多时每次增删都要整体重绘。
 - **查找替换限制**：只在当前文件内搜索（没有跨文件/批量目录替换）；命中只是选中整行，网格里不会高亮具体匹配片段；普通模式替换是字面量（正则模式用 `\1` 反向引用，不支持 `$1` 写法）；`In selection` 只在有多选时生效。
 - **样式管理器限制**：只编辑当前脚本的 `[V4+ Styles]`，不读写样式库/样式目录（`AssStyleStorage`）；未暴露 ScaleX/ScaleY、Spacing、Angle、Encoding；没有颜色选择器（只能填 `#RRGGBB` + Alpha）、不能多选样式；预览是纯 QML `Text`，只反映字体/字号/粗斜下删/主色/描边色，不渲染 ASS 的阴影、不透明度混合等真实效果；删样式不做引用修复（与 wx 版一致，字幕行会保留指向已删除样式的名字）。
 - **菜单/工作区限制**：Qt Quick `Label` 不解析 `&` 助记符，菜单栏标题里的 `&` 被剥掉了（`Alt+F` 这类键盘导航不可用）；菜单项快捷键列是 `ShortcutMenuItem` 自绘的静态文本，真正的按键由 `Shortcut` 元素驱动，两者必须手动保持一致；状态栏编码在新建文档和保存后固定显示 `UTF-8`（保存永远写 UTF-8）。

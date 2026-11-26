@@ -151,6 +151,7 @@ qt_frontend = static_library('qt-frontend',
         'ass_syntax_highlighter.cpp',
         'viewmodels/properties_vm.cpp',
         'viewmodels/subtitle_grid_model.cpp',
+        'fold_state.cpp',
         'viewmodels/edit_box_vm.cpp',
         'viewmodels/document_vm.cpp',
         'viewmodels/undo_manager.cpp',
@@ -200,7 +201,16 @@ aegisub_qt = executable('aegisub-qt', 'main.cpp', qt6_resources,
 
 qt_test_dep = dependency('qt6', modules: ['Test'])
 stage15_integration_test = executable('qt-stage15-integration-test',
-    files('main.cpp', 'stage15_integration_test.cpp', 'stage15b_integration_test.cpp', 'stage16a_integration_test.cpp', 'stage16b_integration_test.cpp', 'stage17a_integration_test.cpp', 'stage17b_integration_test.cpp'), qt6_resources,
+    files(
+        'main.cpp',
+        'stage15_integration_test.cpp',
+        'stage15b_integration_test.cpp',
+        'stage16a_integration_test.cpp',
+        'stage16b_integration_test.cpp',
+        'stage17a_integration_test.cpp',
+        'stage17b_integration_test.cpp',
+        'stage17c_integration_test.cpp',
+    ), qt6_resources,
     dependencies: [qt_frontend_dep, qt_test_dep],
     cpp_args: ['/utf-8', '-DAEGISUB_STAGE15_TEST'],
     build_by_default: false,
@@ -235,6 +245,12 @@ if host_machine.system() == 'windows'
         timeout: 120,
     )
 endif
+
+test('qt-stage17c-folds', stage15_integration_test,
+    args: ['--stage17c'],
+    env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
+    timeout: 90,
+)
 
 ass_tag_utils_test = executable('qt-ass-tag-utils-test',
     files('ass_tag_utils.cpp', 'ass_tag_utils_test.cpp', 'aegisub_core.cpp'),
