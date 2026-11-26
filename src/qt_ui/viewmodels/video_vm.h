@@ -15,6 +15,8 @@
 #include <memory>
 #include <vector>
 
+namespace agi::vfr { class Framerate; }
+
 class AssDialogue;
 class AssFile;
 class AudioViewModel;
@@ -75,6 +77,7 @@ public:
     int currentTimeMs() const;
     QString currentTimeText() const;
     double fps() const;
+    agi::vfr::Framerate framerateSnapshot() const;
     int videoWidth() const;
     int videoHeight() const;
     double sourceDisplayAspectRatio() const;

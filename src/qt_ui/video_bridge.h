@@ -10,6 +10,8 @@
 
 #include <libaegisub/fs_fwd.h>
 
+namespace agi::vfr { class Framerate; }
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -61,6 +63,7 @@ public:
     int FrameCount() const;
     /// Average frame rate (exact for CFR sources).
     double FPS() const;
+    agi::vfr::Framerate FramerateSnapshot() const;
     bool HasAudio() const;
     std::string DecoderName() const;
 

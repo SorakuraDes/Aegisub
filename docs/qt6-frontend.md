@@ -4,6 +4,24 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 16B：Automation 交互与导出
+
+基线 `feature@89da9b583`。Qt 宏、过滤器配置和导出使用单任务工作线程；选择、视频时基、关键帧与项目属性在启动时取值，字体度量和对话框在 GUI 线程处理，日志与进度限频更新。只有宏成功且文档版本未变才写回并提交；取消和错误丢弃事务。导出仅处理副本，采用独立临时目录和原子目标替换。
+
+| 原版源码 | 契约核查 |
+| --- | --- |
+| [auto4_lua_dialog.cpp](../src/auto4_lua_dialog.cpp) | 控件通用 `name/hint/x/y/width/height`，坐标从 0 起、跨度默认 1。`label` 不回传字段；`edit/textbox` 用 `text` 覆盖 `value`，回传字符串；`intedit` 整数范围、`floatedit` 浮点范围与 `step`；`dropdown` 用 `items/value` 并回传文本；`checkbox` 用 `label/value` 并回传布尔。`color`/`coloralpha` 返回 `#RRGGBB`/`#RRGGBBAA`，A 为 ASS 透明度；原版 `alpha` 是普通文本，Qt 对合法值统一为 `#AA`。默认 OK 返回空字符串，自定义按钮返回标签，取消返回 `false` 与即时表单值。 |
+| [auto4_lua_progresssink.cpp](../src/auto4_lua_progresssink.cpp) | 文件参数顺序是标题、目录、文件、通配符；`open` 加多选（默认 false）及必须存在（默认 true），`save` 加 `dont_prompt`（默认 false）。取消返回 `nil`，多选路径表从 1 起。进度使用 0–100、任务、标题、取消查询，日志支持优先级和 Lua 格式化。 |
+| [auto4_lua.cpp](../src/auto4_lua.cpp)、[ass_export_filter.cpp](../src/ass_export_filter.cpp)、[ass_exporter.cpp](../src/ass_exporter.cpp)、[dialog_export.cpp](../src/dialog_export.cpp)、[default_menu.json](../src/libresrc/default_menu.json) | File 菜单另存为之后、最近字幕之前，无默认快捷键。默认优先级从高到低、同优先级按登记顺序，用户可调整实际执行顺序。配置回调接收只读字幕和既有选项；处理回调接收可写副本与选项。Qt 支持 ASS/SRT 和原编码列表（原版 ASS 格式只读 SSA，不将它列为导出格式）；移植不依赖 wx 的 Fix Styles，未接需要 wx 配置和时码上下文的 Transform Framerate。 |
+
+七个官方脚本中 `karaoke-auto-leadin.lua` 不调用 `dialog.display`，实际在选中行间插入 lead-in，另用测试夹具覆盖确认/取消。`kara-templater.lua` 实际注册优先级 2000 的 Karaoke template；测试与自定义配置过滤器串联，检查 Windows-1252 输出和实时文档不变。Qt 原生文件选择的多选模式要求文件存在；同时请求多选且允许不存在时，Qt 通过连续文件选择收集路径，再返回 Lua 路径数组。Windows offscreen 测试使用完整 Qt QML 模块路径；保存结果注入回退会在日志明确标记。
+
+合入前加固：导出使用 Qt 在独立临时目录显式写入并检查刷新，最终以禁用直接写入回退的 `QSaveFile::commit()` 替换目标，不再调用可能在析构中提交的原版写入器。忙碌时关闭主窗会取消当前任务、收起其表单和文件选择器，任务结束后重走脏文档确认。Reload、Remove、Rescan 统一清理失效过滤器选项；打开的导出窗口按 ID 保留有效行的勾选和顺序。测试覆盖 ASS 透明度 `00`/`FF` 和非法输入、Windows 拒绝重命名且原目标字节不变、已开窗口刷新、干净与脏文档续关。
+
+验证记录：Qt 单目标和全量双轨构建通过。使用 Qt 6.6.3 SDK 插件与 QML 路径、隔离 `TEMP/TMP` 跑完整 Meson，6 项 Qt 全过；全项目 13/14，原版 `gtest main` 仍有 18 项 `lagi_acs` 失败（与 Stage 13 已知结果一致），命令退出 1、命令级 stderr 为 0 字节。两个原生保存对话框在 offscreen 仍有结果注入回退，未实机验证保存、取消和覆盖确认按钮，不作为桌面验收结果。
+
+原版权限诊断：在同一普通 `build/data/file` 上，链接现有原版库以及从未修改的 Windows 权限源码重新编译，均对相对和绝对路径抛出 `ReadDenied`。独立 Win32 探针使用同一个令牌和安全描述符，零化 `GENERIC_MAPPING` 时读取被拒，填入 `FILE_GENERIC_READ`、`FILE_GENERIC_WRITE`、`FILE_GENERIC_EXECUTE`、`FILE_ALL_ACCESS` 后通过；[原版实现](../libaegisub/windows/access.cpp#L35)没有初始化该结构。在 Git 忽略目录内仅初始化映射并重新链接原有测试对象，原版套件从 336/354 改善到 345/354；剩余 9 项为写权限断言。在同一隔离对照中，再把 `LABEL_SECURITY_INFORMATION` 加入文件安全描述符查询，原版 354 项全部通过，未修改或跳过任何断言。该对照不是正式 Meson 门禁。本阶段不修改原版权限代码，也不跳过原版测试。
+
 ## Stage 16A：Automation 4
 
 基线 `feature@b6c0ea5da`。Qt 仅补链根 Meson 已定义的 `libluabins`；LuaJIT 已在公用 `deps`，原生 Lua 模块已编入 `libaegisub`。Qt 在 `main.cpp` 组装 Automation ViewModel，不构造 wx `agi::Context`。

@@ -9,6 +9,11 @@
     <file>RecentMenu.qml</file>
     <file>AutomationManagerDialog.qml</file>
     <file>AutomationMacroMenu.qml</file>
+    <file>LuaDialog.qml</file>
+    <file>LuaForm.qml</file>
+    <file>AutomationProgressDialog.qml</file>
+    <file>AutomationFileDialog.qml</file>
+    <file>ExportSubtitlesDialog.qml</file>
     <file>LogWindow.qml</file>
     <file>PropertiesWindow.qml</file>
     <file>SearchDialog.qml</file>

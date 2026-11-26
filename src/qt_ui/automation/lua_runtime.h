@@ -36,6 +36,10 @@ struct Host {
     std::function<void(const QString&)> progressTitle;
     std::function<QString(const QString&)> decodePath;
     std::function<QString()> fileName;
+    std::function<QVariantMap(const QVariantMap&)> dialog;
+    std::function<QStringList(const QVariantMap&)> chooseFile;
+    bool allowDialogs = false;
+    std::function<void(std::function<void()>)> onGui;
 };
 
 struct ScriptMetadata {
@@ -73,6 +77,12 @@ struct Outcome {
     QString title;
 };
 
+struct FilterConfiguration {
+    QString error;
+    bool cancelled = false;
+    QVariantMap dialog;
+};
+
 // One independent Lua state per script. Not concurrently callable.
 class LuaScript {
 public:
@@ -91,7 +101,15 @@ public:
     // the active index is 0 when absent. Validation needs a read-only proxy.
     // A failed/cancelled run must be discarded by the caller, never published.
     Outcome validate(int macro, LuaAssFile& subs, const QVector<int>& selection, int active);
-    Outcome run(int macro, LuaAssFile& subs, const QVector<int>& selection, int active);
+    Outcome run(int macro, LuaAssFile& subs, const QVector<int>& selection, int active,
+                const Host* executionHost = nullptr);
+
+    // Filter index is 0-based. Supply a read-only configuration proxy and a
+    // writable processing proxy; only publish a successful processing result.
+    FilterConfiguration configureFilter(int index, LuaAssFile& subs, const QVariantMap& previous,
+                                        const Host* executionHost = nullptr);
+    Outcome runFilter(int index, LuaAssFile& subs, const QVariantMap& options,
+                      const Host* executionHost = nullptr);
 
 private:
     struct State;

@@ -215,6 +215,9 @@ std::vector<int> VideoBridge::GetKeyframes() const {
 }
 int VideoBridge::FrameCount() const { return impl_->provider ? impl_->provider->GetFrameCount() : 0; }
 double VideoBridge::FPS() const { return impl_->provider ? impl_->provider->GetFPS().FPS() : 0.0; }
+agi::vfr::Framerate VideoBridge::FramerateSnapshot() const {
+    return impl_->provider ? impl_->provider->GetFPS() : agi::vfr::Framerate{};
+}
 bool VideoBridge::HasAudio() const { return impl_->provider && impl_->provider->HasAudio(); }
 
 std::string VideoBridge::DecoderName() const {

@@ -29,6 +29,7 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/log.h>
 #include <libaegisub/path.h>
+#include <libaegisub/vfr.h>
 
 #include <QDir>
 #include <QFileInfo>
@@ -133,6 +134,7 @@ bool VideoViewModel::isPlaying() const { return playing_; }
 QString VideoViewModel::lastError() const { return last_error_; }
 bool VideoViewModel::autoSeekToActiveLine() const { return auto_seek_; }
 double VideoViewModel::fps() const { return bridge_->FPS(); }
+agi::vfr::Framerate VideoViewModel::framerateSnapshot() const { return bridge_->FramerateSnapshot(); }
 int VideoViewModel::videoWidth() const { return bridge_->Width(); }
 double VideoViewModel::sourceDisplayAspectRatio() const { return bridge_->DisplayAspectRatio(); }
 std::vector<int> VideoViewModel::sourceKeyframes() const { return bridge_->GetKeyframes(); }

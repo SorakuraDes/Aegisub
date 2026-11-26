@@ -4,6 +4,7 @@
 #include "qt_path.h"
 #include "version.h"
 
+#include <libaegisub/color.h>
 #include <libaegisub/lua/modules.h>
 #include <libaegisub/lua/script_reader.h>
 #include <libaegisub/lua/utils.h>
@@ -13,12 +14,14 @@
 #include <QFileInfo>
 #include <QFontMetricsF>
 #include <QGuiApplication>
+#include <QRegularExpression>
 #include <QScopeGuard>
 
 #include <algorithm>
 #include <cmath>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace aegisub_qt::automation {
@@ -95,6 +98,16 @@ void pushVariant(lua_State* L, const QVariant& value)
         case QMetaType::Float:
         case QMetaType::Double: lua_pushnumber(L, value.toDouble()); break;
         case QMetaType::QVariantMap: pushMap(L, value.toMap()); break;
+        case QMetaType::QVariantList:
+        case QMetaType::QStringList: {
+            const auto list = value.toList();
+            lua_createtable(L, static_cast<int>(list.size()), 0);
+            for (int i = 0; i < list.size(); ++i) {
+                pushVariant(L, list[i]);
+                lua_rawseti(L, -2, i + 1);
+            }
+            break;
+        }
         default: pushString(L, value.toString()); break;
     }
 }
@@ -131,6 +144,225 @@ int functionRef(lua_State* L, int index)
     return luaL_ref(L, LUA_REGISTRYINDEX);
 }
 
+template<typename Read>
+auto readField(lua_State* L, const char* key, Read read)
+{
+    lua_pushstring(L, key);
+    lua_rawget(L, -2);
+    auto value = read();
+    lua_pop(L, 1);
+    return value;
+}
+
+QString stringField(lua_State* L, const char* key, const QString& fallback = {})
+{
+    return readField(L, key, [&] { return lua_isstring(L, -1) ? stringAt(L, -1) : fallback; });
+}
+
+double numberField(lua_State* L, const char* key, double fallback)
+{
+    return readField(L, key, [&] {
+        const auto value = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : fallback;
+        return std::isfinite(value) ? value : fallback;
+    });
+}
+
+int boundedInt(double value, int min, int max)
+{
+    return static_cast<int>(std::clamp(value, static_cast<double>(min), static_cast<double>(max)));
+}
+
+QString controlColor(const QString& kind, const QString& input)
+{
+    const auto text = input.trimmed();
+    if (kind == QStringLiteral("alpha")) {
+        static const QRegularExpression alpha(QStringLiteral("^(?:#([0-9a-f]{2})|&h([0-9a-f]{2})&?|([0-9a-f]{2}))$"),
+                                              QRegularExpression::CaseInsensitiveOption);
+        const auto match = alpha.match(text);
+        if (!match.hasMatch()) return QStringLiteral("#00");
+        return u'#' + (match.captured(1) + match.captured(2) + match.captured(3)).toUpper();
+    }
+
+    // The core parser handles ASS/SSA and CSS RGB. Explicitly decode RGBA
+    // hex because the core RGB parser does not consume the last two digits.
+    static const QRegularExpression rgba(QStringLiteral("^#[0-9a-fA-F]{8}$"));
+    agi::Color color(text.toStdString());
+    if (rgba.match(text).hasMatch()) {
+        color = agi::Color(text.mid(0, 7).toStdString());
+        color.a = static_cast<unsigned char>(text.mid(7).toUInt(nullptr, 16));
+    }
+    return QString::fromStdString(color.GetHexFormatted(kind == QStringLiteral("coloralpha")));
+}
+
+QVariant normalizedValue(const QVariantMap& control, const QVariant& input)
+{
+    const auto kind = control.value(QStringLiteral("class")).toString();
+    const auto fallback = control.value(QStringLiteral("value"));
+    if (kind == QStringLiteral("intedit") || kind == QStringLiteral("floatedit")) {
+        if (input.typeId() == QMetaType::Bool) return fallback;
+        bool ok = false;
+        const double value = input.toDouble(&ok);
+        if (!ok || !std::isfinite(value)) return fallback;
+        if (kind == QStringLiteral("intedit"))
+            return boundedInt(value, control.value(QStringLiteral("min")).toInt(), control.value(QStringLiteral("max")).toInt());
+        return std::clamp(value, control.value(QStringLiteral("min")).toDouble(), control.value(QStringLiteral("max")).toDouble());
+    }
+    if (kind == QStringLiteral("checkbox")) return input.typeId() == QMetaType::Bool ? input : fallback;
+    if (input.typeId() != QMetaType::QString) return fallback;
+    if (kind == QStringLiteral("alpha") || kind == QStringLiteral("color") || kind == QStringLiteral("coloralpha"))
+        return controlColor(kind, input.toString());
+    return input;
+}
+
+QVariantList readControls(lua_State* L, int table, const QVariantMap& previous = {})
+{
+    if (!lua_istable(L, table)) throw std::runtime_error("Cannot create config dialog from something non-table");
+    lua_pushvalue(L, table);
+    QVariantList controls;
+    lua_pushnil(L);
+    while (lua_next(L, -2)) {
+        if (!lua_istable(L, -1)) throw std::runtime_error("Bad dialog control table entry");
+        const auto kind = stringField(L, "class").toLower();
+        const auto name = stringField(L, "name");
+        // Limit both origins and ends to keep QML GridLayout tracks bounded.
+        constexpr int gridLimit = 256;
+        const int x = boundedInt(numberField(L, "x", 0), 0, gridLimit - 1);
+        const int y = boundedInt(numberField(L, "y", 0), 0, gridLimit - 1);
+        QVariantMap control{
+            {QStringLiteral("class"), kind}, {QStringLiteral("name"), name},
+            {QStringLiteral("hint"), stringField(L, "hint")},
+            {QStringLiteral("x"), x}, {QStringLiteral("y"), y},
+            {QStringLiteral("width"), boundedInt(numberField(L, "width", 1), 1, gridLimit - x)},
+            {QStringLiteral("height"), boundedInt(numberField(L, "height", 1), 1, gridLimit - y)},
+            {QStringLiteral("label"), stringField(L, "label")}
+        };
+        QVariant value;
+        if (kind == QStringLiteral("label")) {
+            // Labels never appear in the result table.
+        }
+        else if (kind == QStringLiteral("edit") || kind == QStringLiteral("textbox") || kind == QStringLiteral("alpha")) {
+            const auto text = stringField(L, "text", stringField(L, "value"));
+            value = kind == QStringLiteral("alpha") ? controlColor(kind, text) : text;
+        }
+        else if (kind == QStringLiteral("color") || kind == QStringLiteral("coloralpha"))
+            value = controlColor(kind, stringField(L, "value"));
+        else if (kind == QStringLiteral("dropdown")) {
+            value = stringField(L, "value");
+            control.insert(QStringLiteral("items"), readField(L, "items", [&] {
+                QVariantList items;
+                if (lua_istable(L, -1)) {
+                    lua_pushnil(L);
+                    while (lua_next(L, -2)) {
+                        if (lua_isstring(L, -1)) items.append(stringAt(L, -1));
+                        lua_pop(L, 1);
+                    }
+                }
+                return items;
+            }));
+        }
+        else if (kind == QStringLiteral("checkbox"))
+            value = readField(L, "value", [&] { return lua_isboolean(L, -1) && lua_toboolean(L, -1); });
+        else if (kind == QStringLiteral("intedit")) {
+            constexpr int lowest = std::numeric_limits<int>::min();
+            constexpr int highest = std::numeric_limits<int>::max();
+            int min = boundedInt(numberField(L, "min", lowest), lowest, highest);
+            int max = boundedInt(numberField(L, "max", highest), lowest, highest);
+            if (min >= max) { min = lowest; max = highest; }
+            control.insert(QStringLiteral("min"), min);
+            control.insert(QStringLiteral("max"), max);
+            control.insert(QStringLiteral("step"), 1);
+            value = boundedInt(numberField(L, "value", 0), min, max);
+        }
+        else if (kind == QStringLiteral("floatedit")) {
+            constexpr double extreme = std::numeric_limits<double>::max();
+            double min = numberField(L, "min", -extreme);
+            double max = numberField(L, "max", extreme);
+            const double step = numberField(L, "step", 0);
+            if (min >= max) { min = -extreme; max = extreme; }
+            if (step != 0) {
+                if (min == -extreme) min = 0;
+                if (max == extreme) max = 100;
+                if (min >= max) { min = 0; max = 100; }
+            }
+            control.insert(QStringLiteral("min"), min);
+            control.insert(QStringLiteral("max"), max);
+            control.insert(QStringLiteral("step"), step);
+            value = std::clamp(numberField(L, "value", 0), min, max);
+        }
+        else throw std::runtime_error("Unknown dialog control class");
+
+        if (value.isValid()) {
+            control.insert(QStringLiteral("value"), value);
+            if (const auto it = previous.constFind(name); it != previous.cend())
+                control.insert(QStringLiteral("value"), normalizedValue(control, it.value()));
+        }
+        controls.append(control);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return controls;
+}
+
+QVariantMap dialogValues(const QVariantList& controls, const QVariantMap& response)
+{
+    QVariantMap values;
+    for (const auto& entry : controls) {
+        const auto control = entry.toMap();
+        const auto name = control.value(QStringLiteral("name")).toString();
+        if (!control.contains(QStringLiteral("value"))) {
+            // A later label with a duplicate name overwrote the original value with nil.
+            values.remove(name);
+            continue;
+        }
+        values.insert(name, normalizedValue(control, response.value(name)));
+    }
+    return values;
+}
+
+QVariantMap dialogButton(const QString& text, const QString& role, const QString& result)
+{
+    return {{QStringLiteral("text"), text}, {QStringLiteral("role"), role}, {QStringLiteral("result"), result}};
+}
+
+QVariantList readButtons(lua_State* L)
+{
+    QVariantList buttons;
+    if (lua_istable(L, 2)) {
+        lua_pushnil(L);
+        while (lua_next(L, 2)) {
+            const auto text = checkedString(L, -1);
+            buttons.append(dialogButton(text, QStringLiteral("custom"), text));
+            lua_pop(L, 1);
+        }
+    }
+    if (lua_istable(L, 3)) {
+        static const QStringList roles{
+            QStringLiteral("ok"), QStringLiteral("yes"), QStringLiteral("save"), QStringLiteral("apply"),
+            QStringLiteral("close"), QStringLiteral("no"), QStringLiteral("cancel"), QStringLiteral("help"),
+            QStringLiteral("context_help")
+        };
+        lua_pushnil(L);
+        while (lua_next(L, 3)) {
+            lua_pushvalue(L, -2); // Conversion must not change the key used by lua_next.
+            const auto role = checkedString(L, -1);
+            lua_pop(L, 1);
+            const auto text = checkedString(L, -1);
+            const auto button = std::find_if(buttons.begin(), buttons.end(), [&](const QVariant& entry) {
+                return entry.toMap().value(QStringLiteral("text")).toString() == text;
+            });
+            if (button == buttons.end()) throw std::runtime_error("Invalid dialog button mapping");
+            *button = dialogButton(text, roles.contains(role) ? role : QStringLiteral("custom"),
+                                   role == QStringLiteral("cancel") ? QString{} : text);
+            lua_pop(L, 1);
+        }
+    }
+    if (buttons.isEmpty()) {
+        buttons.append(dialogButton(QStringLiteral("OK"), QStringLiteral("ok"), QStringLiteral("")));
+        buttons.append(dialogButton(QStringLiteral("Cancel"), QStringLiteral("cancel"), QStringLiteral("")));
+    }
+    return buttons;
+}
+
 } // namespace
 
 struct LuaScript::State {
@@ -140,20 +372,53 @@ struct LuaScript::State {
         int isActive;
     };
 
+    struct FilterFunctions {
+        int run;
+        int configure;
+    };
+
     lua_State* L = nullptr;
     Host host;
+    const Host* executionHost = nullptr;
+
+    const Host& currentHost() const { return executionHost ? *executionHost : host; }
     ScriptMetadata metadata;
     QVector<Macro> macros;
     QVector<Filter> filters;
     QVector<MacroFunctions> macroFunctions;
+    QVector<FilterFunctions> filterFunctions;
     QString filename;
     QStringList searchDirs;
     QString undoLabel;
     int disableJitRef = LUA_NOREF;
+    int flushJitRef = LUA_NOREF;
     bool loading = false;
     bool invoking = false;
     bool runningMacro = false;
     bool cancelled = false;
+    int cancelledHookTicks = 0;
+
+    struct Invocation {
+        State& state;
+        const Host* previousHost;
+
+        Invocation(State& state, const Host* host = nullptr, bool macro = false)
+            : state(state), previousHost(std::exchange(state.executionHost, host))
+        {
+            state.invoking = true;
+            state.runningMacro = macro;
+            state.cancelled = false;
+            state.cancelledHookTicks = 0;
+        }
+
+        ~Invocation()
+        {
+            state.executionHost = previousHost;
+            state.invoking = false;
+            state.runningMacro = false;
+            state.undoLabel.clear();
+        }
+    };
 
     ~State()
     {
@@ -173,7 +438,8 @@ struct LuaScript::State {
 
     bool pollCancellation()
     {
-        if (!cancelled && host.isCancelled) cancelled = host.isCancelled();
+        const auto& callback = currentHost().isCancelled;
+        if (!cancelled && callback) cancelled = callback();
         return cancelled;
     }
 
@@ -183,6 +449,11 @@ struct LuaScript::State {
         // Lua errors are catchable; the C++ latch remains set independently.
         try {
             if (!state.pollCancellation()) return;
+            // Give cooperative loops time to observe is_cancelled() first.
+            if (state.cancelledHookTicks < 8) {
+                ++state.cancelledHookTicks;
+                return;
+            }
         }
         catch (...) {
             state.cancelled = true;
@@ -224,21 +495,23 @@ struct LuaScript::State {
         if (!self.loading) return agi::lua::error(L, "Filters can only be registered while loading a script");
         const auto name = checkedString(L, 1);
         if (!lua_isfunction(L, 4)) return agi::lua::typerror(L, 4, "function");
-        self.filters.append(Filter{name, stringAt(L, 2), integerAt(L, 3).value_or(0), lua_isfunction(L, 5) != 0});
+        const FilterFunctions functions{functionRef(L, 4), functionRef(L, 5)};
+        self.filters.append(Filter{name, stringAt(L, 2), integerAt(L, 3).value_or(0), functions.configure != LUA_NOREF});
+        self.filterFunctions.append(functions);
         return 0;
     }
 
     static int gettext(lua_State* L)
     {
         const auto input = checkedString(L, 1);
-        const auto& translate = get(L).host.translate;
+        const auto& translate = get(L).currentHost().translate;
         pushString(L, translate ? translate(input) : input);
         return 1;
     }
 
     static int log(lua_State* L)
     {
-        const auto& callback = get(L).host.log;
+        const auto& callback = get(L).currentHost().log;
         if (!callback) return 0;
         int level = 0;
         if (lua_type(L, 1) == LUA_TNUMBER) {
@@ -260,7 +533,7 @@ struct LuaScript::State {
     template<auto Member>
     static int timeConversion(lua_State* L)
     {
-        const auto& callback = get(L).host.*Member;
+        const auto& callback = get(L).currentHost().*Member;
         const auto value = integerAt(L, 1);
         pushOptional(L, callback && value ? callback(*value) : std::nullopt);
         return 1;
@@ -268,7 +541,7 @@ struct LuaScript::State {
 
     static int videoSize(lua_State* L)
     {
-        const auto& callback = get(L).host.videoSize;
+        const auto& callback = get(L).currentHost().videoSize;
         if (auto size = callback ? callback() : std::nullopt) {
             lua_pushinteger(L, size->width);
             lua_pushinteger(L, size->height);
@@ -282,7 +555,7 @@ struct LuaScript::State {
 
     static int keyframes(lua_State* L)
     {
-        const auto& callback = get(L).host.keyframes;
+        const auto& callback = get(L).currentHost().keyframes;
         if (auto indexes = callback ? callback() : std::nullopt) pushIndexes(L, *indexes);
         else lua_pushnil(L);
         return 1;
@@ -290,7 +563,7 @@ struct LuaScript::State {
 
     static int properties(lua_State* L)
     {
-        const auto& callback = get(L).host.properties;
+        const auto& callback = get(L).currentHost().properties;
         if (callback) pushMap(L, callback());
         else lua_pushnil(L);
         return 1;
@@ -299,14 +572,14 @@ struct LuaScript::State {
     static int decodePath(lua_State* L)
     {
         const auto input = checkedString(L, 1);
-        const auto& callback = get(L).host.decodePath;
+        const auto& callback = get(L).currentHost().decodePath;
         pushString(L, callback ? callback(input) : input);
         return 1;
     }
 
     static int fileName(lua_State* L)
     {
-        const auto& callback = get(L).host.fileName;
+        const auto& callback = get(L).currentHost().fileName;
         const QString filename = callback ? callback() : QString{};
         if (filename.isEmpty()) lua_pushnil(L);
         else pushString(L, filename);
@@ -315,7 +588,7 @@ struct LuaScript::State {
 
     static int progressSet(lua_State* L)
     {
-        if (const auto& callback = get(L).host.progressSet) {
+        if (const auto& callback = get(L).currentHost().progressSet) {
             const double percent = lua_tonumber(L, 1);
             if (std::isfinite(percent)) callback(std::clamp(percent, 0.0, 100.0));
         }
@@ -325,7 +598,7 @@ struct LuaScript::State {
     template<auto Member>
     static int progressText(lua_State* L)
     {
-        if (const auto& callback = get(L).host.*Member) callback(checkedString(L, 1));
+        if (const auto& callback = get(L).currentHost().*Member) callback(checkedString(L, 1));
         return 0;
     }
 
@@ -338,17 +611,59 @@ struct LuaScript::State {
         return 0;
     }
 
-    template<bool Display>
-    static int deferredDialog(lua_State* L)
+    static int displayDialog(lua_State* L)
     {
-        if (const auto& callback = get(L).host.log)
-            callback(0, QStringLiteral("Automation dialogs are deferred to Stage 16B."));
-        if constexpr (Display) {
+        const auto& self = get(L);
+        const auto& host = self.currentHost();
+        if (!self.runningMacro || !host.allowDialogs || !host.dialog) {
             lua_pushboolean(L, false);
             lua_newtable(L);
             return 2;
         }
-        lua_pushnil(L);
+        const auto controls = readControls(L, 1);
+        const auto buttons = readButtons(L);
+        const auto response = host.dialog({{QStringLiteral("controls"), controls}, {QStringLiteral("buttons"), buttons}});
+        const auto button = response.value(QStringLiteral("button"));
+        const auto result = button.toString();
+        const bool accepted = button.typeId() == QMetaType::QString &&
+            std::any_of(buttons.cbegin(), buttons.cend(), [&](const QVariant& item) {
+                const auto definition = item.toMap();
+                return definition.value(QStringLiteral("role")).toString() != QStringLiteral("cancel") &&
+                       definition.value(QStringLiteral("result")).toString() == result;
+            });
+        if (accepted) pushString(L, result);
+        else lua_pushboolean(L, false);
+        pushMap(L, dialogValues(controls, response.value(QStringLiteral("values")).toMap()));
+        return 2;
+    }
+
+    template<bool Save>
+    static int chooseFile(lua_State* L)
+    {
+        const auto& self = get(L);
+        const auto& host = self.currentHost();
+        if (!self.runningMacro || !host.allowDialogs || !host.chooseFile) {
+            lua_pushnil(L);
+            return 1;
+        }
+        const bool multiple = !Save && lua_toboolean(L, 5);
+        const bool mustExist = !Save && (lua_isnoneornil(L, 6) || lua_toboolean(L, 6));
+        const bool dontPrompt = Save && lua_toboolean(L, 5);
+        const auto paths = host.chooseFile({
+            {QStringLiteral("title"), checkedString(L, 1)}, {QStringLiteral("directory"), checkedString(L, 2)},
+            {QStringLiteral("file"), checkedString(L, 3)}, {QStringLiteral("wildcard"), checkedString(L, 4)},
+            {QStringLiteral("save"), Save}, {QStringLiteral("multiple"), multiple},
+            {QStringLiteral("mustExist"), mustExist}, {QStringLiteral("dontPrompt"), dontPrompt}
+        });
+        if (paths.isEmpty()) lua_pushnil(L);
+        else if (multiple) {
+            lua_createtable(L, static_cast<int>(paths.size()), 0);
+            for (int i = 0; i < paths.size(); ++i) {
+                pushString(L, paths[i]);
+                lua_rawseti(L, -2, i + 1);
+            }
+        }
+        else pushString(L, paths.first());
         return 1;
     }
 
@@ -388,20 +703,28 @@ struct LuaScript::State {
         if (!qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
             return agi::lua::error(L, "Text metrics require a Qt GUI application");
 
-        QFont font(fieldString("fontname"));
-        // Oversample to retain fractional ASS font sizes and spacing.
         constexpr double oversample = 8.0;
-        font.setPixelSize(qRound(std::clamp(fieldNumber("fontsize", 20), 1.0, 4096.0) * oversample));
-        font.setBold(fieldBool("bold"));
-        font.setItalic(fieldBool("italic"));
-        font.setLetterSpacing(QFont::AbsoluteSpacing, fieldNumber("spacing", 0) * oversample);
-        QFontMetricsF metrics(font);
+        const auto family = fieldString("fontname");
+        const auto size = qRound(std::clamp(fieldNumber("fontsize", 20), 1.0, 4096.0) * oversample);
+        const auto bold = fieldBool("bold"), italic = fieldBool("italic");
+        const auto spacing = fieldNumber("spacing", 0) * oversample;
         const double x = fieldNumber("scale_x", 100) / (100 * oversample);
         const double y = fieldNumber("scale_y", 100) / (100 * oversample);
-        lua_pushnumber(L, metrics.horizontalAdvance(text) * x);
-        lua_pushnumber(L, metrics.height() * y);
-        lua_pushnumber(L, metrics.descent() * y);
-        lua_pushnumber(L, metrics.leading() * y);
+        auto values = std::make_shared<QVector<double>>();
+        auto measure = [=] {
+            QFont font(family);
+            font.setPixelSize(size);
+            font.setBold(bold);
+            font.setItalic(italic);
+            font.setLetterSpacing(QFont::AbsoluteSpacing, spacing);
+            const QFontMetricsF metrics(font);
+            *values = {metrics.horizontalAdvance(text) * x, metrics.height() * y,
+                       metrics.descent() * y, metrics.leading() * y};
+        };
+        if (const auto &onGui = get(L).currentHost().onGui) onGui(measure);
+        else measure();
+        if (values->isEmpty()) return 0;
+        for (double value : *values) lua_pushnumber(L, value);
         return 4;
     }
 
@@ -514,6 +837,9 @@ struct LuaScript::State {
             lua_getfield(L, -1, "off");
             disableJitRef = functionRef(L, -1);
             lua_pop(L, 1);
+            lua_getfield(L, -1, "flush");
+            flushJitRef = functionRef(L, -1);
+            lua_pop(L, 1);
         }
         lua_pop(L, 1);
         lua_pushlightuserdata(L, &registryKey);
@@ -599,9 +925,9 @@ struct LuaScript::State {
         setFunction<isCancelled>(L, "is_cancelled");
         lua_setfield(L, -2, "progress");
         lua_newtable(L);
-        setFunction<deferredDialog<true>>(L, "display");
-        setFunction<deferredDialog<false>>(L, "open");
-        setFunction<deferredDialog<false>>(L, "save");
+        setFunction<displayDialog>(L, "display");
+        setFunction<chooseFile<false>>(L, "open");
+        setFunction<chooseFile<true>>(L, "save");
         lua_setfield(L, -2, "dialog");
         lua_setglobal(L, "aegisub");
         return true;
@@ -610,8 +936,9 @@ struct LuaScript::State {
     void beginCancellationHook()
     {
         // Compiled loops do not reliably dispatch instruction count hooks.
-        if (disableJitRef != LUA_NOREF) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, disableJitRef);
+        for (const int ref : {disableJitRef, flushJitRef}) {
+            if (ref == LUA_NOREF) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
             if (lua_pcall(L, 0, 0, 0) != 0) lua_pop(L, 1);
         }
         lua_sethook(L, cancelHook, LUA_MASKCOUNT, 10000);
@@ -627,9 +954,9 @@ struct LuaScript::State {
         return value;
     }
 
-    template<typename ReadResults>
-    void call(int function, LuaAssFile& subs, const QVector<int>& selection, int active,
-              int resultCount, Outcome& result, ReadResults&& readResults)
+    template<typename Result, typename PushArgs, typename ReadResults>
+    void call(int function, LuaAssFile& subs, int resultCount, Result& result,
+              PushArgs&& pushArgs, ReadResults&& readResults)
     {
         const int base = lua_gettop(L);
         const auto cleanup = qScopeGuard([&] {
@@ -637,22 +964,40 @@ struct LuaScript::State {
             subs.invalidate();
             lua_settop(L, base);
         });
-        if (pollCancellation()) {
-            result.cancelled = true;
-            return;
+        try {
+            if (pollCancellation()) {
+                result.cancelled = true;
+                return;
+            }
+            lua_pushcfunction(L, luaCallback<agi::lua::add_stack_trace>);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, function);
+            subs.push(L);
+            const int extraArgs = pushArgs();
+            beginCancellationHook();
+            const int status = lua_pcall(L, 1 + extraArgs, resultCount, base + 1);
+            lua_sethook(L, nullptr, 0, 0);
+            if (pollCancellation()) result.cancelled = true;
+            else if (status != 0) result.error = errorAtTop(L);
+            else readResults();
         }
-        lua_pushcfunction(L, luaCallback<agi::lua::add_stack_trace>);
-        lua_rawgeti(L, LUA_REGISTRYINDEX, function);
-        subs.push(L);
-        pushIndexes(L, selection);
-        if (active == 0 && !runningMacro) lua_pushnil(L);
-        else lua_pushinteger(L, active);
-        beginCancellationHook();
-        const int status = lua_pcall(L, 3, resultCount, base + 1);
-        lua_sethook(L, nullptr, 0, 0);
-        if (pollCancellation()) result.cancelled = true;
-        else if (status != 0) result.error = errorAtTop(L);
-        else readResults();
+        catch (const agi::Exception& e) {
+            result.error = QString::fromStdString(e.GetMessage());
+        }
+        catch (const std::exception& e) {
+            result.error = QString::fromUtf8(e.what());
+        }
+    }
+
+    template<typename ReadResults>
+    void callMacro(int function, LuaAssFile& subs, const QVector<int>& selection, int active,
+                   int resultCount, Outcome& result, ReadResults&& readResults)
+    {
+        call(function, subs, resultCount, result, [&] {
+            pushIndexes(L, selection);
+            if (active == 0 && !runningMacro) lua_pushnil(L);
+            else lua_pushinteger(L, active);
+            return 2;
+        }, std::forward<ReadResults>(readResults));
     }
 };
 
@@ -687,6 +1032,7 @@ bool LuaScript::load(const QString& filename, const QStringList& includeDirs, Ho
         self.macros.clear();
         self.macroFunctions.clear();
         self.filters.clear();
+        self.filterFunctions.clear();
         if (error) *error = reason;
         return false;
     };
@@ -731,13 +1077,11 @@ Outcome LuaScript::validate(int macro, LuaAssFile& subs, const QVector<int>& sel
         result.enabled = false;
         return result;
     }
-    self.invoking = true;
-    self.cancelled = false;
-    const auto reset = qScopeGuard([&] { self.invoking = false; });
+    const State::Invocation invocation(self);
     const auto functions = self.macroFunctions[macro];
     result.description = self.macros[macro].description;
     if (functions.validate != LUA_NOREF) {
-        self.call(functions.validate, subs, selection, active, 3, result, [&] {
+        self.callMacro(functions.validate, subs, selection, active, 3, result, [&] {
             result.enabled = lua_toboolean(self.L, -3);
             const auto description = stringAt(self.L, -2);
             if (!description.isEmpty()) result.description = description;
@@ -745,7 +1089,7 @@ Outcome LuaScript::validate(int macro, LuaAssFile& subs, const QVector<int>& sel
         });
     }
     if (functions.isActive != LUA_NOREF && !result.cancelled && result.error.isEmpty()) {
-        self.call(functions.isActive, subs, selection, active, 1, result, [&] {
+        self.callMacro(functions.isActive, subs, selection, active, 1, result, [&] {
             result.checked = lua_toboolean(self.L, -1);
         });
     }
@@ -753,7 +1097,8 @@ Outcome LuaScript::validate(int macro, LuaAssFile& subs, const QVector<int>& sel
     return result;
 }
 
-Outcome LuaScript::run(int macro, LuaAssFile& subs, const QVector<int>& selection, int active)
+Outcome LuaScript::run(int macro, LuaAssFile& subs, const QVector<int>& selection, int active,
+                       const Host* executionHost)
 {
     Outcome result;
     auto& self = *state_;
@@ -761,16 +1106,9 @@ Outcome LuaScript::run(int macro, LuaAssFile& subs, const QVector<int>& selectio
         result.error = QStringLiteral("Lua macro is unavailable.");
         return result;
     }
-    self.invoking = true;
-    self.runningMacro = true;
-    self.cancelled = false;
+    const State::Invocation invocation(self, executionHost, true);
     self.undoLabel = self.macros[macro].name;
-    const auto reset = qScopeGuard([&] {
-        self.invoking = false;
-        self.runningMacro = false;
-        self.undoLabel.clear();
-    });
-    self.call(self.macroFunctions[macro].run, subs, selection, active, 2, result, [&] {
+    self.callMacro(self.macroFunctions[macro].run, subs, selection, active, 2, result, [&] {
         lua_State* L = self.L;
         if (!lua_isnil(L, -1)) {
             const auto index = integerAt(L, -1);
@@ -805,6 +1143,47 @@ Outcome LuaScript::run(int macro, LuaAssFile& subs, const QVector<int>& selectio
         result.selection.reset();
         result.active.reset();
     }
+    return result;
+}
+
+FilterConfiguration LuaScript::configureFilter(int index, LuaAssFile& subs, const QVariantMap& previous,
+                                               const Host* executionHost)
+{
+    FilterConfiguration result;
+    auto& self = *state_;
+    if (!self.L || self.loading || self.invoking || index < 0 || index >= self.filters.size()) {
+        result.error = QStringLiteral("Lua export filter is unavailable.");
+        return result;
+    }
+    const int configure = self.filterFunctions[index].configure;
+    if (configure == LUA_NOREF) return result;
+
+    const State::Invocation invocation(self, executionHost);
+    self.call(configure, subs, 1, result, [&] {
+        pushMap(self.L, previous);
+        return 1;
+    }, [&] {
+        result.dialog.insert(QStringLiteral("controls"), readControls(self.L, -1, previous));
+    });
+    return result;
+}
+
+Outcome LuaScript::runFilter(int index, LuaAssFile& subs, const QVariantMap& options,
+                             const Host* executionHost)
+{
+    Outcome result;
+    auto& self = *state_;
+    if (!self.L || self.loading || self.invoking || index < 0 || index >= self.filters.size()) {
+        result.error = QStringLiteral("Lua export filter is unavailable.");
+        return result;
+    }
+    const State::Invocation invocation(self, executionHost);
+    const auto& functions = self.filterFunctions[index];
+    self.call(functions.run, subs, 0, result, [&] {
+        if (functions.configure == LUA_NOREF) lua_newtable(self.L);
+        else pushMap(self.L, options);
+        return 1;
+    }, [] {});
     return result;
 }
 

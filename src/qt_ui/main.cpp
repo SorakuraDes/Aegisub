@@ -204,6 +204,7 @@ int runStage15IntegrationTest(QQmlApplicationEngine &engine);
 int runStage15BIntegrationTest(QQmlApplicationEngine &engine);
 int runStage15BReloadTest(QQmlApplicationEngine &engine);
 int runStage16AIntegrationTest(QQmlApplicationEngine &engine);
+int runStage16BIntegrationTest(QQmlApplicationEngine &engine);
 #endif
 
 int main(int argc, char *argv[]) {
@@ -215,9 +216,11 @@ int main(int argc, char *argv[]) {
     qunsetenv("AEGISUB_QT_LANGUAGE");
     bool reloadTest = false;
     bool automationTest = false;
+    bool automationInteractiveTest = false;
     for (int i = 1; i < argc; ++i) {
         reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
         automationTest |= QByteArray(argv[i]) == "--stage16a";
+        automationInteractiveTest |= QByteArray(argv[i]) == "--stage16b";
     }
     QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
     if (!reloadTest) {
@@ -445,6 +448,7 @@ int main(int argc, char *argv[]) {
     });
 
 #ifdef AEGISUB_STAGE15_TEST
+    if (automationInteractiveTest) return runStage16BIntegrationTest(engine);
     if (automationTest) return runStage16AIntegrationTest(engine);
     if (reloadTest) return runStage15BReloadTest(engine);
     if (const int result = runStage15IntegrationTest(engine)) return result;

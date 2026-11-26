@@ -37,6 +37,7 @@ ApplicationWindow {
     property string pendingAfterSave: ""
     // Set once the user chose to discard; lets close() get through onClosing.
     property bool forceClose: false
+    property bool pendingCloseAfterAutomation: false
 
     // ---- Windows ---------------------------------------------------------
 
@@ -312,7 +313,25 @@ ApplicationWindow {
             searchVM.findNext()
     }
 
+    function resumeCloseAfterAutomation() {
+        if (!pendingCloseAfterAutomation || automationVM.busy)
+            return
+        pendingCloseAfterAutomation = false
+        mainWindow.close()
+    }
+
     onClosing: function(close) {
+        if (automationVM.busy) {
+            close.accepted = false
+            if (!pendingCloseAfterAutomation) {
+                pendingCloseAfterAutomation = true
+                automationVM.cancelOperation()
+                automationForm.dismissRequest()
+                automationPicker.dismissRequest()
+            }
+            return
+        }
+        pendingCloseAfterAutomation = false
         if (!forceClose && documentVM.dirty) {
             close.accepted = false
             requestAction("quit")
@@ -330,7 +349,7 @@ ApplicationWindow {
     Shortcut { sequence: StandardKey.Open; onActivated: mainWindow.requestAction("open") }
     // Ctrl+S / Ctrl+Shift+S are handled by main.cpp's MainShortcutFilter (the
     // QML Shortcut matcher cannot tell them apart for letter keys).
-    Shortcut { sequence: StandardKey.Quit; onActivated: mainWindow.requestAction("quit") }
+    Shortcut { sequence: StandardKey.Quit; onActivated: mainWindow.close() }
     Shortcut { sequence: StandardKey.Find; onActivated: mainWindow.openSearch(false) }
     Shortcut { sequence: StandardKey.Replace; onActivated: mainWindow.openSearch(true) }
     // Shift Times (Aegisub's subtitle/shift times; Ctrl+I matches the wx frontend).
@@ -414,11 +433,17 @@ ApplicationWindow {
             ShortcutMenuItem { text: i18n.t("Open Subtitles..."); shortcutText: "Ctrl+O"; onTriggered: mainWindow.requestAction("open") }
             ShortcutMenuItem { text: i18n.t("Save Subtitles"); shortcutText: "Ctrl+S"; onTriggered: mainWindow.saveDocument() }
             ShortcutMenuItem { text: i18n.t("Save Subtitles as..."); shortcutText: "Ctrl+Shift+S"; onTriggered: saveAsDialog.open() }
+            ShortcutMenuItem {
+                objectName: "exportSubtitlesMenuItem"
+                text: i18n.t("&Export Subtitles...")
+                enabled: !automationVM.busy
+                onTriggered: exportSubtitlesDialog.open()
+            }
             RecentMenu { objectName: "recentSubtitlesMenu"; paths: mruVM.subtitles; onOpenPath: path => mainWindow.requestAction("recent", path) }
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Properties..."); onTriggered: mainWindow.openWindow("properties") }
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Exit"); shortcutText: "Ctrl+Q"; onTriggered: mainWindow.requestAction("quit") }
+            ShortcutMenuItem { text: i18n.t("Exit"); shortcutText: "Ctrl+Q"; onTriggered: mainWindow.close() }
         }
 
         Menu {
@@ -690,6 +715,12 @@ ApplicationWindow {
 
     LanguageDialog { id: languageDialog }
     AutomationManagerDialog { id: automationManagerDialog }
+    LuaDialog { id: automationForm }
+    AutomationProgressDialog {
+        visible: automationVM.progressVisible && !dismissed && !mainWindow.pendingCloseAfterAutomation
+    }
+    AutomationFileDialog { id: automationPicker }
+    ExportSubtitlesDialog { id: exportSubtitlesDialog }
     Component {
         id: automationSubmenuFactory
         Menu {
@@ -707,6 +738,10 @@ ApplicationWindow {
 
     Connections {
         target: automationVM
+        function onOperationFinished(success) {
+            if (mainWindow.pendingCloseAfterAutomation)
+                Qt.callLater(mainWindow.resumeCloseAfterAutomation)
+        }
         function onExecutionError(message) {
             automationErrorText.text = message
             automationErrorDialog.open()
@@ -868,6 +903,7 @@ ApplicationWindow {
     // Material 3 style guard against losing unsaved changes.
     Dialog {
         id: unsavedDialog
+        objectName: "unsavedDialog"
         anchors.centerIn: Overlay.overlay
         width: 460
         modal: true
@@ -908,6 +944,7 @@ ApplicationWindow {
                     }
                 }
                 Button {
+                    objectName: "unsavedCancelButton"
                     text: i18n.t("Cancel")
                     onClicked: {
                         unsavedDialog.close()

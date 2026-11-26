@@ -184,7 +184,7 @@ aegisub_qt = executable('aegisub-qt', 'main.cpp', qt6_resources,
 
 qt_test_dep = dependency('qt6', modules: ['Test'])
 stage15_integration_test = executable('qt-stage15-integration-test',
-    files('main.cpp', 'stage15_integration_test.cpp', 'stage15b_integration_test.cpp', 'stage16a_integration_test.cpp'), qt6_resources,
+    files('main.cpp', 'stage15_integration_test.cpp', 'stage15b_integration_test.cpp', 'stage16a_integration_test.cpp', 'stage16b_integration_test.cpp'), qt6_resources,
     dependencies: [qt_frontend_dep, qt_test_dep],
     cpp_args: ['/utf-8', '-DAEGISUB_STAGE15_TEST'],
     build_by_default: false,
@@ -198,6 +198,12 @@ test('qt-stage16a-automation', stage15_integration_test,
     args: ['--stage16a'],
     env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
     timeout: 60,
+)
+
+test('qt-stage16b-automation', stage15_integration_test,
+    args: ['--stage16b'],
+    env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
+    timeout: 90,
 )
 
 ass_tag_utils_test = executable('qt-ass-tag-utils-test',

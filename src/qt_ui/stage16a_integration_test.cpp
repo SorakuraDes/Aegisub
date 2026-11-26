@@ -114,12 +114,20 @@ QVariantMap macro(QObject *automation, const QString &title) {
     return macro(automation->property("menu").toList(), title);
 }
 
+bool finishedWith(QObject *automation, const QSignalSpy &finished, bool expected) {
+    return finished.isValid() && QTest::qWaitFor([&] {
+        return !finished.isEmpty() && !automation->property("busy").toBool();
+    }, 5000) && finished.size() == 1 && finished.first().value(0).toBool() == expected;
+}
+
 bool runMacro(QObject *automation, const QVariantMap &entry, bool expected) {
     bool validId = false;
     const int id = entry.value(QStringLiteral("id")).toInt(&validId);
-    bool result = !expected;
-    return validId && QMetaObject::invokeMethod(automation, "runMacro", Q_RETURN_ARG(bool, result), Q_ARG(int, id)) &&
-        result == expected;
+    QSignalSpy finished(automation, SIGNAL(operationFinished(bool)));
+    bool accepted = false;
+    return validId && finished.isValid() &&
+        QMetaObject::invokeMethod(automation, "runMacro", Q_RETURN_ARG(bool, accepted), Q_ARG(int, id)) &&
+        accepted && finishedWith(automation, finished, expected);
 }
 
 int scriptRow(QObject *automation, const QString &fileName) {
@@ -312,12 +320,13 @@ int runStage16AIntegrationTest(QQmlApplicationEngine &engine) {
           "could not capture or close the open Automation menu");
     const auto edgeblur = macro(automation, QStringLiteral("Add edgeblur"));
     auto *edgeItem = menuItem(menu, QStringLiteral("automationMacro_%1").arg(edgeblur.value(QStringLiteral("id")).toInt()));
+    QSignalSpy edgeFinished(automation, SIGNAL(operationFinished(bool)));
     CHECK(edgeItem && edgeItem->property("text").toString() == QStringLiteral("Add edgeblur") && activate(edgeItem, "triggered"),
           "Add edgeblur is not actionable in the production menu");
     auto blurred = baseline;
     blurred[0].prepend(QStringLiteral("{\\be1}"));
     blurred[2].prepend(QStringLiteral("{\\be1}"));
-    CHECK(QTest::qWaitFor([&] { return texts(grid) == blurred; }, 2000) &&
+    CHECK(finishedWith(automation, edgeFinished, true) && texts(grid) == blurred &&
           grid->sortedSelectedRows() == selected && grid->activeRow() == active &&
           document->dirty() && undo->canUndo() && !undo->canRedo() && undo->undoDescription() == QStringLiteral("Add edgeblur"),
           "edgeblur should affect only selected rows in one named undo transaction" << texts(grid));
