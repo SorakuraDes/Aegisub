@@ -4,6 +4,14 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 17B：Windows 字体收集器
+
+基线 `feature@ef71a4403`。File → Fonts Collector... 在 Attachments... 下方，按需打开独立的莫奈主题窗口。支持检查、复制到指定目录、复制到字幕目录（未保存时禁用）、打包 ZIP。沿用 `Tool/Fonts Collector/Action` 和 `Path/Fonts Collector Destination`，支持 `?script`、`?user`、`?data`。
+
+- [ViewModel](../src/qt_ui/viewmodels/fonts_collector_vm.cpp)在 GUI 线程取得 `AssFile` 深拷贝（补拷工程属性），后台扫描和导出，排队追加日志；运行时不允许再次启动、切换模式或关闭。收集不提交文档、不影响撤销。Qt 界面可切换英中，扫描日志保留原版诊断。
+- [窄桥](../src/qt_ui/fonts_collector_bridge.cpp)复用原版 `FontCollector` 和 GDI/DirectWrite 定位物理字体；wx 头只进入带 PCH 的 `ass_qt_core`。复制使用 Unicode 路径，递归创建目录，不覆盖同名文件。ZIP 用 zlib 写 STORE/DEFLATE 和 UTF-8 条目名，不调用 wx ZIP API；仅在邻接临时文件写完并刷新后替换目标。归档不支持 ZIP64；不区分大小写的条目名冲突会拒绝整个归档。
+- 验收：`bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe`、全量双轨均退出 0。Qt 6.6.3 SDK、离屏软件渲染、隔离临时目录下，`meson test -C build --no-rebuild 'qt-*'` **8/8 通过，退出 0**。新增[集成测试](../src/qt_ui/stage17b_integration_test.cpp)验证 Arial 物理路径、缺字体和缺字形、注释跳过、中文目录和字幕目录复制、同名跳过、ZIP 结构与 CRC/原字节、锁定 ZIP 不损坏旧文件、配置复启与四组中英深浅像素断言。设置 `AEGISUB_STAGE17B_SCREENSHOTS` 可保存四张截图，本机输出在 `.build-tools/stage17b/`。未实机操作原生浏览对话框。
+
 ## Stage 17A：条件选行、覆盖粘贴和附件
 
 基线 `feature@9d1f2199e`。三个入口按原版菜单顺序加入，使用现有 Material 莫奈主题和翻译服务。没有改原版 wxWidgets 源码或 `libaegisub`。

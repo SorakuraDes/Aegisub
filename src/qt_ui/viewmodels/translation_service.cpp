@@ -225,6 +225,11 @@ bool TranslationService::load(const QString &code, Catalog &catalog) const {
         addQtLabel("bytes", QStringLiteral("字节"));
         addQtLabel("Extract Attachment", QStringLiteral("提取附件"));
         addQtLabel("Extract Attachments to Folder", QStringLiteral("提取附件到文件夹"));
+        addQtLabel("Copy Log", QStringLiteral("复制日志"));
+        addQtLabel("Collecting fonts...", QStringLiteral("正在收集字体…"));
+        addQtLabel("Font collection failed", QStringLiteral("字体收集失败"));
+        addQtLabel("Font files found: %1; missing: %2", QStringLiteral("找到 %1 个字体文件；缺失 %2 项"));
+        addQtLabel("Zip Archives (*.zip)", QStringLiteral("ZIP 压缩文件 (*.zip)"));
     }
     catalog = std::move(next);
     return true;

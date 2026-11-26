@@ -22,6 +22,7 @@
     <file>SelectLinesDialog.qml</file>
     <file>PasteOverDialog.qml</file>
     <file>AttachmentsDialog.qml</file>
+    <file>FontsCollectorDialog.qml</file>
     <file>ToolDialogButton.qml</file>
     <file>ResampleDialog.qml</file>
     <file>TrackPickerDialog.qml</file>

@@ -27,6 +27,7 @@
 #include "viewmodels/select_lines_vm.h"
 #include "viewmodels/paste_over_vm.h"
 #include "viewmodels/attachments_vm.h"
+#include "viewmodels/fonts_collector_vm.h"
 #include "viewmodels/shift_times_vm.h"
 #include "viewmodels/styles_vm.h"
 #include "viewmodels/subtitle_grid_model.h"
@@ -212,6 +213,8 @@ int runStage15BReloadTest(QQmlApplicationEngine &engine);
 int runStage16AIntegrationTest(QQmlApplicationEngine &engine);
 int runStage16BIntegrationTest(QQmlApplicationEngine &engine);
 int runStage17AIntegrationTest(QQmlApplicationEngine &engine, bool restart);
+int RunStage17BIntegrationTest(QQmlApplicationEngine &, DocumentViewModel &, FontsCollectorViewModel &);
+int RunStage17BRestartCheck(FontsCollectorViewModel &);
 #endif
 
 int main(int argc, char *argv[]) {
@@ -226,14 +229,18 @@ int main(int argc, char *argv[]) {
     bool automationInteractiveTest = false;
     bool stage17ATest = false;
     bool stage17ARestart = false;
+    bool stage17BTest = false;
+    bool stage17BRestart = false;
     for (int i = 1; i < argc; ++i) {
         reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
         automationTest |= QByteArray(argv[i]) == "--stage16a";
         automationInteractiveTest |= QByteArray(argv[i]) == "--stage16b";
         stage17ATest |= QByteArray(argv[i]) == "--stage17a";
         stage17ARestart |= QByteArray(argv[i]) == "--stage17a-restart";
+        stage17BTest |= QByteArray(argv[i]) == "--stage17b";
+        stage17BRestart |= QByteArray(argv[i]) == "--stage17b-restart";
     }
-    reloadTest |= stage17ARestart;
+    reloadTest |= stage17ARestart || stage17BRestart;
     QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
     if (!reloadTest) {
         if (!testConfig.isValid()) {
@@ -290,6 +297,7 @@ int main(int argc, char *argv[]) {
     SelectLinesViewModel selectLinesVM(&script, &gridModel);
     PasteOverViewModel pasteOverVM(&script, &gridModel);
     AttachmentsViewModel attachmentsVM(&script, &undoManager, &documentVM);
+    FontsCollectorViewModel fontsCollectorVM(&script, &documentVM);
     StylesViewModel stylesVM(&script, &undoManager);
     VideoViewModel videoVM(&script, &gridModel, &undoManager);
     AudioViewModel audioVM(&script, &gridModel, &undoManager);
@@ -374,6 +382,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("selectLinesVM", &selectLinesVM);
     engine.rootContext()->setContextProperty("pasteOverVM", &pasteOverVM);
     engine.rootContext()->setContextProperty("attachmentsVM", &attachmentsVM);
+    engine.rootContext()->setContextProperty("fontsCollectorVM", &fontsCollectorVM);
     engine.rootContext()->setContextProperty("stylesVM", &stylesVM);
     engine.rootContext()->setContextProperty("videoVM", &videoVM);
     engine.rootContext()->setContextProperty("visualToolsVM", &visualToolsVM);
@@ -466,6 +475,8 @@ int main(int argc, char *argv[]) {
     });
 
 #ifdef AEGISUB_STAGE15_TEST
+    if (stage17BRestart) return RunStage17BRestartCheck(fontsCollectorVM);
+    if (stage17BTest) return RunStage17BIntegrationTest(engine, documentVM, fontsCollectorVM);
     if (stage17ATest || stage17ARestart) return runStage17AIntegrationTest(engine, stage17ARestart);
     if (automationInteractiveTest) return runStage16BIntegrationTest(engine);
     if (automationTest) return runStage16AIntegrationTest(engine);

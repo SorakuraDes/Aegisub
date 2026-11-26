@@ -42,6 +42,21 @@ ApplicationWindow {
 
     function openPasteOver() { if (hasSelection && !pasteOverDialog.visible) pasteOverDialog.open() }
     function openAttachments() { attachmentsDialog.open() }
+    property var fontsCollectorDialog: null
+    function openFontsCollector() {
+        if (fontsCollectorDialog === null) {
+            const component = Qt.createComponent("qrc:/FontsCollectorDialog.qml")
+            if (component.status !== Component.Ready) {
+                console.error(component.errorString())
+                return
+            }
+            fontsCollectorDialog = component.createObject(mainWindow, { transientParent: mainWindow })
+        }
+        if (fontsCollectorDialog !== null) {
+            fontsCollectorDialog.open()
+            raiseAndActivate(fontsCollectorDialog)
+        }
+    }
     function pasteGridLines() { gridModel.pasteRows() }
 
     AttachmentsDialog { id: attachmentsDialog }
@@ -228,6 +243,7 @@ ApplicationWindow {
         jumpDialog.close()
         detailsDialog.close()
         attachmentsDialog.close()
+        if (fontsCollectorDialog !== null) fontsCollectorDialog.close()
         pasteOverDialog.close()
         if (selectLinesWindow !== null) selectLinesWindow.close()
         if (logWindow !== null) logWindow.close()
@@ -347,6 +363,10 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
+        if (fontsCollectorVM.running) {
+            close.accepted = false
+            return
+        }
         if (automationVM.busy) {
             close.accepted = false
             if (!pendingCloseAfterAutomation) {
@@ -469,6 +489,7 @@ ApplicationWindow {
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Properties..."); onTriggered: mainWindow.openWindow("properties") }
             ShortcutMenuItem { objectName: "attachmentsMenuItem"; text: i18n.t("Attachments..."); onTriggered: mainWindow.openAttachments() }
+            ShortcutMenuItem { objectName: "fontsCollectorMenuItem"; text: i18n.t("Fonts Collector..."); onTriggered: mainWindow.openFontsCollector() }
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Exit"); shortcutText: "Ctrl+Q"; onTriggered: mainWindow.close() }
         }

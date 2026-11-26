@@ -23,6 +23,7 @@ qt6_moc = qt6.preprocess(
         'viewmodels/select_lines_vm.h',
         'viewmodels/paste_over_vm.h',
         'viewmodels/attachments_vm.h',
+        'viewmodels/fonts_collector_vm.h',
         'viewmodels/styles_vm.h',
         'viewmodels/video_vm.h',
         'viewmodels/audio_vm.h',
@@ -60,7 +61,15 @@ default_config_platform = configure_file(
 # AssDialogue); they are shared with the wx frontend and only compiled here.
 # They need the wx precompiled header (src/utils.h uses wx types), hence the
 # separate static library with cpp_pch.
+qt_fonts_sources = files('fonts_collector_bridge.cpp')
+qt_fonts_deps = []
+if host_machine.system() == 'windows'
+    qt_fonts_sources += files('../font_file_lister.cpp', '../font_file_lister_gdi.cpp')
+    qt_fonts_deps += [cc.find_library('gdi32'), cc.find_library('dwrite')]
+endif
+
 ass_qt_core = static_library('ass_qt_core',
+    qt_fonts_sources,
     files(
         '../ass_file.cpp',
         '../ass_entry.cpp',
@@ -149,6 +158,7 @@ qt_frontend = static_library('qt-frontend',
         'viewmodels/select_lines_vm.cpp',
         'viewmodels/paste_over_vm.cpp',
         'viewmodels/attachments_vm.cpp',
+        'viewmodels/fonts_collector_vm.cpp',
         'viewmodels/styles_vm.cpp',
         'viewmodels/video_vm.cpp',
         'viewmodels/audio_vm.cpp',
@@ -172,7 +182,7 @@ qt_frontend = static_library('qt-frontend',
 qt_frontend_dep = declare_dependency(
     include_directories: [libaegisub_inc, version_inc, deps_inc, include_directories('.'), include_directories('..')],
     link_with: [qt_frontend, av_qt_core, ass_qt_core, libaegisub, libluabins],
-    dependencies: [qt6_dep] + deps,
+    dependencies: [qt6_dep] + deps + qt_fonts_deps,
 )
 
 # Keep the standard main(argc, argv) entry point without allocating a console.
@@ -190,7 +200,7 @@ aegisub_qt = executable('aegisub-qt', 'main.cpp', qt6_resources,
 
 qt_test_dep = dependency('qt6', modules: ['Test'])
 stage15_integration_test = executable('qt-stage15-integration-test',
-    files('main.cpp', 'stage15_integration_test.cpp', 'stage15b_integration_test.cpp', 'stage16a_integration_test.cpp', 'stage16b_integration_test.cpp', 'stage17a_integration_test.cpp'), qt6_resources,
+    files('main.cpp', 'stage15_integration_test.cpp', 'stage15b_integration_test.cpp', 'stage16a_integration_test.cpp', 'stage16b_integration_test.cpp', 'stage17a_integration_test.cpp', 'stage17b_integration_test.cpp'), qt6_resources,
     dependencies: [qt_frontend_dep, qt_test_dep],
     cpp_args: ['/utf-8', '-DAEGISUB_STAGE15_TEST'],
     build_by_default: false,
@@ -217,6 +227,14 @@ test('qt-stage17a-tools', stage15_integration_test,
     env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
     timeout: 90,
 )
+
+if host_machine.system() == 'windows'
+    test('qt-stage17b-fonts-collector', stage15_integration_test,
+        args: ['--stage17b'],
+        env: ['QT_QPA_PLATFORM=offscreen', 'QT_QUICK_BACKEND=software'],
+        timeout: 120,
+    )
+endif
 
 ass_tag_utils_test = executable('qt-ass-tag-utils-test',
     files('ass_tag_utils.cpp', 'ass_tag_utils_test.cpp', 'aegisub_core.cpp'),
