@@ -24,6 +24,9 @@
 #include "viewmodels/properties_vm.h"
 #include "viewmodels/resample_vm.h"
 #include "viewmodels/search_vm.h"
+#include "viewmodels/select_lines_vm.h"
+#include "viewmodels/paste_over_vm.h"
+#include "viewmodels/attachments_vm.h"
 #include "viewmodels/shift_times_vm.h"
 #include "viewmodels/styles_vm.h"
 #include "viewmodels/subtitle_grid_model.h"
@@ -165,10 +168,12 @@ protected:
 
         auto *key_event = static_cast<QKeyEvent *>(event);
         const bool split = key_event->key() == Qt::Key_D;
-        if (key_event->key() != Qt::Key_S && !split)
+        const bool paste = key_event->key() == Qt::Key_V;
+        if (key_event->key() != Qt::Key_S && !split && !paste)
             return false;
         if (QGuiApplication::focusWindow() != root_ ||
-            (split && !root_->property("canSplit").toBool()))
+            (split && !root_->property("canSplit").toBool()) ||
+            (paste && !root_->property("canPasteGrid").toBool()))
             return false;
 
         const Qt::KeyboardModifiers mods = key_event->modifiers();
@@ -182,7 +187,8 @@ protected:
 
         if (!key_event->isAutoRepeat() && root_) {
             const bool shift = mods.testFlag(Qt::ShiftModifier);
-            const char *method = split ? (shift ? "splitAfterFrame" : "splitBeforeFrame")
+            const char *method = paste ? (shift ? "openPasteOver" : "pasteGridLines")
+                               : split ? (shift ? "splitAfterFrame" : "splitBeforeFrame")
                                        : (shift ? "openSaveAsDialog" : "saveDocument");
             if (!QMetaObject::invokeMethod(root_, method, Qt::DirectConnection))
                 qWarning() << "aegisub-qt: Main.qml has no" << method << "function";
@@ -205,6 +211,7 @@ int runStage15BIntegrationTest(QQmlApplicationEngine &engine);
 int runStage15BReloadTest(QQmlApplicationEngine &engine);
 int runStage16AIntegrationTest(QQmlApplicationEngine &engine);
 int runStage16BIntegrationTest(QQmlApplicationEngine &engine);
+int runStage17AIntegrationTest(QQmlApplicationEngine &engine, bool restart);
 #endif
 
 int main(int argc, char *argv[]) {
@@ -217,11 +224,16 @@ int main(int argc, char *argv[]) {
     bool reloadTest = false;
     bool automationTest = false;
     bool automationInteractiveTest = false;
+    bool stage17ATest = false;
+    bool stage17ARestart = false;
     for (int i = 1; i < argc; ++i) {
         reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
         automationTest |= QByteArray(argv[i]) == "--stage16a";
         automationInteractiveTest |= QByteArray(argv[i]) == "--stage16b";
+        stage17ATest |= QByteArray(argv[i]) == "--stage17a";
+        stage17ARestart |= QByteArray(argv[i]) == "--stage17a-restart";
     }
+    reloadTest |= stage17ARestart;
     QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
     if (!reloadTest) {
         if (!testConfig.isValid()) {
@@ -275,6 +287,9 @@ int main(int argc, char *argv[]) {
     EditBoxViewModel editBoxVM(&gridModel, &script, &undoManager);
     DocumentViewModel documentVM(&script, &gridModel, &undoManager);
     SearchViewModel searchVM(&script, &gridModel);
+    SelectLinesViewModel selectLinesVM(&script, &gridModel);
+    PasteOverViewModel pasteOverVM(&script, &gridModel);
+    AttachmentsViewModel attachmentsVM(&script, &undoManager, &documentVM);
     StylesViewModel stylesVM(&script, &undoManager);
     VideoViewModel videoVM(&script, &gridModel, &undoManager);
     AudioViewModel audioVM(&script, &gridModel, &undoManager);
@@ -356,6 +371,9 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("documentVM", &documentVM);
     engine.rootContext()->setContextProperty("undoVM", &undoManager);
     engine.rootContext()->setContextProperty("searchVM", &searchVM);
+    engine.rootContext()->setContextProperty("selectLinesVM", &selectLinesVM);
+    engine.rootContext()->setContextProperty("pasteOverVM", &pasteOverVM);
+    engine.rootContext()->setContextProperty("attachmentsVM", &attachmentsVM);
     engine.rootContext()->setContextProperty("stylesVM", &stylesVM);
     engine.rootContext()->setContextProperty("videoVM", &videoVM);
     engine.rootContext()->setContextProperty("visualToolsVM", &visualToolsVM);
@@ -448,6 +466,7 @@ int main(int argc, char *argv[]) {
     });
 
 #ifdef AEGISUB_STAGE15_TEST
+    if (stage17ATest || stage17ARestart) return runStage17AIntegrationTest(engine, stage17ARestart);
     if (automationInteractiveTest) return runStage16BIntegrationTest(engine);
     if (automationTest) return runStage16AIntegrationTest(engine);
     if (reloadTest) return runStage15BReloadTest(engine);

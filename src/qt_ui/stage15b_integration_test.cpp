@@ -187,7 +187,7 @@ bool translatedMenus(QQuickWindow *window) {
     const QStringList direct{QStringLiteral("样式管理器…"), QStringLiteral("重设分辨率…"), QStringLiteral("插入行"),
         QStringLiteral("重复行"), QStringLiteral("以当前帧前分割行"), QStringLiteral("以当前帧后分割行"),
         QStringLiteral("删除行"), QStringLiteral("合并行"), QStringLiteral("排序所有行"),
-        QStringLiteral("排序选择行"), QStringLiteral("互换行"), QStringLiteral("全选")};
+        QStringLiteral("排序选择行"), QStringLiteral("互换行"), QStringLiteral("选择多行…"), QStringLiteral("全选")};
     if (labels(subtitle) != direct) return false;
 
     const auto submenu = [subtitle](const QString &title) -> QObject * {

@@ -24,6 +24,28 @@ ApplicationWindow {
     property var searchWindow: null
     property var stylesWindow: null
     property var shiftTimesWindow: null
+    property var selectLinesWindow: null
+
+    function openSelectLines() {
+        if (selectLinesWindow === null) {
+            const component = Qt.createComponent("qrc:/SelectLinesDialog.qml")
+            if (component.status !== Component.Ready) {
+                console.error("Failed to load SelectLinesDialog.qml", component.errorString())
+                return
+            }
+            selectLinesWindow = component.createObject(mainWindow)
+            if (selectLinesWindow === null) return
+        }
+        selectLinesWindow.openForSelectLines()
+        raiseAndActivate(selectLinesWindow)
+    }
+
+    function openPasteOver() { if (hasSelection && !pasteOverDialog.visible) pasteOverDialog.open() }
+    function openAttachments() { attachmentsDialog.open() }
+    function pasteGridLines() { gridModel.pasteRows() }
+
+    AttachmentsDialog { id: attachmentsDialog }
+    PasteOverDialog { id: pasteOverDialog; transientParent: mainWindow }
     property var trackPickerWindow: null
     property var logWindow: null
     property int workspaceLayout: 3
@@ -205,6 +227,9 @@ ApplicationWindow {
         resampleDialog.close()
         jumpDialog.close()
         detailsDialog.close()
+        attachmentsDialog.close()
+        pasteOverDialog.close()
+        if (selectLinesWindow !== null) selectLinesWindow.close()
         if (logWindow !== null) logWindow.close()
         if (searchWindow !== null) {
             searchWindow.close()
@@ -292,6 +317,7 @@ ApplicationWindow {
     }
 
     readonly property bool hasSelection: gridModel.selectionCount > 0
+    readonly property bool canPasteGrid: !textInputFocused() && !pasteOverDialog.visible && !attachmentsDialog.visible
     readonly property bool canSplit: videoVM.hasVideo && hasSelection
     readonly property bool canJoin: gridModel.selectionCount >= 2
     readonly property bool canJump: videoVM.hasVideo && gridModel.activeRow >= 0
@@ -363,7 +389,7 @@ ApplicationWindow {
     }
     Shortcut { sequence: "Ctrl+X"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.cutSelectedRows() }
     Shortcut { sequence: "Ctrl+C"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.copySelectedRows() }
-    Shortcut { sequence: "Ctrl+V"; enabled: !mainWindow.textInputFocused(); onActivated: gridModel.pasteRows() }
+    // MainShortcutFilter distinguishes Ctrl+V from Ctrl+Shift+V.
     Shortcut { sequence: "Alt+Up"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.moveSelectedRows(-1) }
     Shortcut { sequence: "Alt+Down"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.moveSelectedRows(1) }
     Shortcut { sequence: "F3"; onActivated: mainWindow.findNext() }
@@ -442,6 +468,7 @@ ApplicationWindow {
             RecentMenu { objectName: "recentSubtitlesMenu"; paths: mruVM.subtitles; onOpenPath: path => mainWindow.requestAction("recent", path) }
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Properties..."); onTriggered: mainWindow.openWindow("properties") }
+            ShortcutMenuItem { objectName: "attachmentsMenuItem"; text: i18n.t("Attachments..."); onTriggered: mainWindow.openAttachments() }
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Exit"); shortcutText: "Ctrl+Q"; onTriggered: mainWindow.close() }
         }
@@ -471,6 +498,7 @@ ApplicationWindow {
             ShortcutMenuItem { text: i18n.t("Cut Lines"); shortcutText: "Ctrl+X"; enabled: mainWindow.hasSelection; onTriggered: gridModel.cutSelectedRows() }
             ShortcutMenuItem { text: i18n.t("Copy Lines"); shortcutText: "Ctrl+C"; enabled: mainWindow.hasSelection; onTriggered: gridModel.copySelectedRows() }
             ShortcutMenuItem { text: i18n.t("Paste Lines"); shortcutText: "Ctrl+V"; onTriggered: gridModel.pasteRows() }
+            ShortcutMenuItem { objectName: "pasteOverMenuItem"; text: i18n.t("Paste Lines Over..."); shortcutText: "Ctrl+Shift+V"; enabled: mainWindow.hasSelection; onTriggered: mainWindow.openPasteOver() }
             MenuSeparator {}
             ShortcutMenuItem { text: i18n.t("Find..."); shortcutText: "Ctrl+F"; onTriggered: mainWindow.openSearch(false) }
             ShortcutMenuItem { text: i18n.t("Find Next"); shortcutText: "F3"; onTriggered: mainWindow.findNext() }
@@ -549,6 +577,7 @@ ApplicationWindow {
                 ShortcutMenuItem { text: i18n.t("Layer"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(5) }
             }
             ShortcutMenuItem { text: i18n.t("Swap Lines"); enabled: gridModel.selectionCount === 2; onTriggered: gridModel.swapSelectedLines() }
+            ShortcutMenuItem { objectName: "selectLinesMenuItem"; text: i18n.t("Select Lines..."); onTriggered: mainWindow.openSelectLines() }
             ShortcutMenuItem { text: i18n.t("Select All"); shortcutText: "Ctrl+A"; onTriggered: gridModel.selectAll() }
         }
 

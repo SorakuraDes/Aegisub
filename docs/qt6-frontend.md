@@ -4,6 +4,16 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 17A：条件选行、覆盖粘贴和附件
+
+基线 `feature@9d1f2199e`。三个入口按原版菜单顺序加入，使用现有 Material 莫奈主题和翻译服务。没有改原版 wxWidgets 源码或 `libaegisub`。
+
+- [Select Lines](../src/qt_ui/SelectLinesDialog.qml)：非模态单实例，关闭保存 `Tool/Select Lines/*`。匹配只读扫描全部事件，保留原始 ASS 标签；正则无效时保留选区，空结果保留活动行，其余按文档序选择后备活动行。不提交文档。Apply 生效后 Cancel 不撤回。
+- [Paste Lines Over](../src/qt_ui/PasteOverDialog.qml)：`Ctrl+Shift+V` 仅在主窗非文本输入焦点触发。按原 11 位字段顺序补齐旧 10 位掩码（默认仍只选 Effect）。单选从活动行向下，多选按文档序覆盖选中行，不插行或改变选区；仅 OK 保存字段并以一次 `COMMIT_DIAG_FULL` 提交。
+- [Attachments](../src/qt_ui/AttachmentsDialog.qml)：复用 `AssFile::Attachments`、`InsertAttachment` 与 ASS UU 解码。导入和删除各单次提交，已打开窗口随撤销和重载刷新。提取不提交；拒绝路径成分与保留设备名，用 `QSaveFile` 检查写入和提交。批量提取拒绝重名和已存在目标，每个文件原子写入，不承诺整批原子性。
+
+验收：`bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe` 和全量双轨均退出 0。[Stage 17A 集成测试](../src/qt_ui/stage17a_integration_test.cpp)覆盖选行匹配、重启配置、覆盖粘贴真实快捷键与撤销，以及[附件回归](../src/qt_ui/stage17a_attachments_test.h)的 Unicode 路径、ASS 往返、提取字节一致、路径穿越和撤销。以 Qt 6.6.3 SDK 插件/QML 路径和隔离 `TEMP/TMP` 运行 `meson test -C build --no-rebuild 'qt-*'`，7/7 通过，Stage 17A 用例 stderr 为 0 字节；原有 Stage 16A/16B 用例仍有故意触发的 Automation 日志和 Qt 平台警告。`AEGISUB_STAGE17A_SCREENSHOTS` 指向 `.build-tools/stage17a/` 时采集 6 张英中离屏截图（不入库）。原生文件选择器的系统窗口按钮未作实机验收。
+
 ## Stage 16B：Automation 交互与导出
 
 基线 `feature@89da9b583`。Qt 宏、过滤器配置和导出使用单任务工作线程；选择、视频时基、关键帧与项目属性在启动时取值，字体度量和对话框在 GUI 线程处理，日志与进度限频更新。只有宏成功且文档版本未变才写回并提交；取消和错误丢弃事务。导出仅处理副本，采用独立临时目录和原子目标替换。

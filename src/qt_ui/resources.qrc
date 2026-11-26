@@ -19,6 +19,10 @@
     <file>SearchDialog.qml</file>
     <file>StylesWindow.qml</file>
     <file>ShiftTimesDialog.qml</file>
+    <file>SelectLinesDialog.qml</file>
+    <file>PasteOverDialog.qml</file>
+    <file>AttachmentsDialog.qml</file>
+    <file>ToolDialogButton.qml</file>
     <file>ResampleDialog.qml</file>
     <file>TrackPickerDialog.qml</file>
     <file>ShortcutMenuItem.qml</file>

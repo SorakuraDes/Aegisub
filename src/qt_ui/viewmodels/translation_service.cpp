@@ -215,6 +215,16 @@ bool TranslationService::load(const QString &code, Catalog &catalog) const {
         addQtLabel("Timing", QStringLiteral("时间"));
         addQtLabel("View", QStringLiteral("视图"));
         addQtLabel("Stripped Text", QStringLiteral("去除标签的文本"));
+        addQtLabel("OK", QStringLiteral("确定"));
+        addQtLabel("Apply", QStringLiteral("应用"));
+        addQtLabel("Matched %1 line(s); selected %2 line(s)", QStringLiteral("匹配 %1 行；已选中 %2 行"));
+        addQtLabel("The document or selection has changed.", QStringLiteral("文档或选区已更改。"));
+        addQtLabel("Attach Fonts", QStringLiteral("附加字体"));
+        addQtLabel("Encoded size", QStringLiteral("编码后大小"));
+        addQtLabel("No attachments", QStringLiteral("无附件"));
+        addQtLabel("bytes", QStringLiteral("字节"));
+        addQtLabel("Extract Attachment", QStringLiteral("提取附件"));
+        addQtLabel("Extract Attachments to Folder", QStringLiteral("提取附件到文件夹"));
     }
     catalog = std::move(next);
     return true;
