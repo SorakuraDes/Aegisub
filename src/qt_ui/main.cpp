@@ -17,6 +17,7 @@
 #include "viewmodels/document_vm.h"
 #include "viewmodels/edit_box_vm.h"
 #include "viewmodels/preferences_vm.h"
+#include "viewmodels/hotkey_vm.h"
 #include "viewmodels/mru_vm.h"
 #include "viewmodels/log_vm.h"
 #include "viewmodels/theme_vm.h"
@@ -37,10 +38,10 @@
 
 #include <QCoreApplication>
 #include <QDebug>
-#include <QEvent>
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QKeyEvent>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QtQml>
@@ -50,157 +51,37 @@
 
 namespace {
 
-/// Routes Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z to the UndoManager.
-///
-/// A QML Action.shortcut is not enough here: QQuickTextInput implements its own
-/// undo/redo and accepts the ShortcutOverride event for those keys, which
-/// silently swallows the menu shortcut whenever an edit field has focus. An
-/// application-wide filter sees the ShortcutOverride first, accepts it (so no
-/// shortcut fires at all) and then handles the KeyPress itself, which gives
-/// exactly one undo per key press regardless of the focus.
-class UndoShortcutFilter final : public QObject {
-public:
-    explicit UndoShortcutFilter(UndoManager *undo, QObject *parent = nullptr)
-    : QObject(parent)
-    , undo_(undo)
-    {
-    }
+QString medusaKey() { return QStringLiteral("Audio/Medusa Timing Hotkeys"); }
 
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override {
-        Q_UNUSED(watched);
+void showCommandUi(QQuickWindow *window, const char *id) {
+    if (!QMetaObject::invokeMethod(window, "showCommandUi", Q_ARG(QVariant, QVariant(QString::fromLatin1(id)))))
+        qWarning() << "Could not invoke visual action for" << id;
+}
 
-        const QEvent::Type type = event->type();
-        if (type != QEvent::ShortcutOverride && type != QEvent::KeyPress)
-            return false;
+void focusVideoSeek(QQuickWindow *window) {
+    if (auto *seek = window->findChild<QQuickItem *>(QStringLiteral("videoSeekSlider")))
+        seek->forceActiveFocus(Qt::ShortcutFocusReason);
+}
 
-        auto *key_event = static_cast<QKeyEvent *>(event);
-        const Qt::KeyboardModifiers mods = key_event->modifiers();
-        if (mods != Qt::ControlModifier && mods != (Qt::ControlModifier | Qt::ShiftModifier))
-            return false;
+bool hasBodyFocus() {
+    const auto *focus = QGuiApplication::focusObject();
+    return focus && focus->objectName() == QStringLiteral("editBoxTextArea");
+}
 
-        const bool shift = mods.testFlag(Qt::ShiftModifier);
-        const int key = key_event->key();
-        const bool is_undo = key == Qt::Key_Z && !shift;
-        const bool is_redo = (key == Qt::Key_Y && !shift) || (key == Qt::Key_Z && shift);
-        if (!is_undo && !is_redo)
-            return false;
-
-        if (type == QEvent::ShortcutOverride) {
-            event->accept();
-            return true;
-        }
-
-        // Auto-repeat would blow through the whole undo stack in a flash.
-        if (!key_event->isAutoRepeat()) {
-            if (is_undo)
-                undo_->undo();
-            else
-                undo_->redo();
-        }
-        event->accept();
-        return true;
-    }
-
-private:
-    UndoManager *undo_;
-};
-
-/// Set as the `objectName` of the body TextArea in EditBox.qml.
-constexpr const char kBodyEditorObjectName[] = "editBoxTextArea";
-
-/// Forwards Enter / Shift+Enter from the body TextArea to EditBoxViewModel.
-///
-/// QQuickTextArea consumes Return itself (it inserts a newline and accepts the
-/// event) before QML `Keys` attached handlers are consulted, so
-/// `Keys.onReturnPressed` on the TextArea never fires. An application-level
-/// filter sees the KeyPress first and handles it deterministically.
-class BodyEnterFilter final : public QObject {
-public:
-    explicit BodyEnterFilter(EditBoxViewModel *editBox, QObject *parent = nullptr)
-    : QObject(parent)
-    , editBox_(editBox)
-    {
-    }
-
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override {
-        Q_UNUSED(watched);
-
-        if (event->type() != QEvent::KeyPress)
-            return false;
-
-        auto *key_event = static_cast<QKeyEvent *>(event);
-        if (key_event->key() != Qt::Key_Return && key_event->key() != Qt::Key_Enter)
-            return false;
-
-        QObject *focus = QGuiApplication::focusObject();
-        if (!focus || focus->objectName() != QLatin1String(kBodyEditorObjectName))
-            return false;
-
-        if (!key_event->isAutoRepeat())
-            editBox_->handleEnterKey(key_event->modifiers().testFlag(Qt::ShiftModifier));
-
-        event->accept();
-        return true;
-    }
-
-private:
-    EditBoxViewModel *editBox_;
-};
-
-// Qt's shortcut matcher can treat Ctrl+letter and Ctrl+Shift+letter as
-// ambiguous. Dispatch the exact save and split key combinations ourselves.
-class MainShortcutFilter final : public QObject {
-public:
-    explicit MainShortcutFilter(QObject *rootObject, QObject *parent = nullptr)
-    : QObject(parent)
-    , root_(rootObject)
-    {
-    }
-
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override {
-        Q_UNUSED(watched);
-
-        const QEvent::Type type = event->type();
-        if (type != QEvent::ShortcutOverride && type != QEvent::KeyPress)
-            return false;
-
-        auto *key_event = static_cast<QKeyEvent *>(event);
-        const bool split = key_event->key() == Qt::Key_D;
-        const bool paste = key_event->key() == Qt::Key_V;
-        if (key_event->key() != Qt::Key_S && !split && !paste)
-            return false;
-        if (QGuiApplication::focusWindow() != root_ ||
-            (split && !root_->property("canSplit").toBool()) ||
-            (paste && !root_->property("canPasteGrid").toBool()))
-            return false;
-
-        const Qt::KeyboardModifiers mods = key_event->modifiers();
-        if (mods != Qt::ControlModifier && mods != (Qt::ControlModifier | Qt::ShiftModifier))
-            return false;
-
-        if (type == QEvent::ShortcutOverride) {
-            event->accept();
-            return true;
-        }
-
-        if (!key_event->isAutoRepeat() && root_) {
-            const bool shift = mods.testFlag(Qt::ShiftModifier);
-            const char *method = paste ? (shift ? "openPasteOver" : "pasteGridLines")
-                               : split ? (shift ? "splitAfterFrame" : "splitBeforeFrame")
-                                       : (shift ? "openSaveAsDialog" : "saveDocument");
-            if (!QMetaObject::invokeMethod(root_, method, Qt::DirectConnection))
-                qWarning() << "aegisub-qt: Main.qml has no" << method << "function";
-        }
-        event->accept();
-        return true;
-    }
-
-private:
-    QObject *root_;
-};
+void registerHotkeyCommands(HotkeyViewModel &hotkeyVM, QQuickWindow *main,
+                            PreferencesViewModel &preferencesVM, ThemeViewModel &themeVM,
+                            SubtitleGridModel &gridModel, EditBoxViewModel &editBoxVM,
+                            UndoManager &undoManager, VideoViewModel &videoVM,
+                            AudioViewModel &audioVM, VisualToolsViewModel &visualToolsVM,
+                            aegisub_qt::automation::AutomationViewModel &automationVM) {
+    auto command = [&](const char *id, const char *context, std::function<void()> action,
+                       std::function<bool()> enabled = {}) {
+        hotkeyVM.registerCommand(QString::fromLatin1(id), QString::fromLatin1(context),
+                                 std::move(action), std::move(enabled));
+    };
+#include "hotkey_commands.inc"
+    hotkeyVM.setSoftLineBreakHandler([&editBoxVM] { editBoxVM.handleEnterKey(true); });
+}
 
 } // namespace
 
@@ -216,6 +97,9 @@ int runStage17AIntegrationTest(QQmlApplicationEngine &engine, bool restart);
 int RunStage17BIntegrationTest(QQmlApplicationEngine &, DocumentViewModel &, FontsCollectorViewModel &);
 int RunStage17BRestartCheck(FontsCollectorViewModel &);
 int runStage17CIntegrationTest(QQmlApplicationEngine &engine);
+int runStage18AIntegrationTest(QQmlApplicationEngine &engine, bool restart);
+bool writeStage18BHotkeyFixture();
+int runStage18BIntegrationTest(QGuiApplication &, QQmlApplicationEngine &, bool restart);
 #endif
 
 int main(int argc, char *argv[]) {
@@ -233,6 +117,10 @@ int main(int argc, char *argv[]) {
     bool stage17BTest = false;
     bool stage17BRestart = false;
     bool stage17CTest = false;
+    bool stage18ATest = false;
+    bool stage18ARestart = false;
+    bool stage18BTest = false;
+    bool stage18BRestart = false;
     for (int i = 1; i < argc; ++i) {
         reloadTest |= QByteArray(argv[i]) == "--stage15b-reload";
         automationTest |= QByteArray(argv[i]) == "--stage16a";
@@ -242,8 +130,12 @@ int main(int argc, char *argv[]) {
         stage17BTest |= QByteArray(argv[i]) == "--stage17b";
         stage17BRestart |= QByteArray(argv[i]) == "--stage17b-restart";
         stage17CTest |= QByteArray(argv[i]) == "--stage17c";
+        stage18ATest |= QByteArray(argv[i]) == "--stage18a";
+        stage18ARestart |= QByteArray(argv[i]) == "--stage18a-restart";
+        stage18BTest |= QByteArray(argv[i]) == "--stage18b";
+        stage18BRestart |= QByteArray(argv[i]) == "--stage18b-restart";
     }
-    reloadTest |= stage17ARestart || stage17BRestart;
+    reloadTest |= stage17ARestart || stage17BRestart || stage18ARestart || stage18BRestart;
     QTemporaryDir testConfig(QStringLiteral("stage15-config-XXXXXX"));
     if (!reloadTest) {
         if (!testConfig.isValid()) {
@@ -264,6 +156,10 @@ int main(int argc, char *argv[]) {
     const bool core_ok = aegisub_qt::InitializeCore(&core_error);
     if (!core_ok)
         qWarning() << "Aegisub core initialization failed:" << core_error;
+
+#ifdef AEGISUB_STAGE15_TEST
+    if (stage18BTest && !writeStage18BHotkeyFixture()) return 1;
+#endif
 
     // libass library + the background font-cache build. Doing this at startup
     // (like src/main.cpp does for the wx frontend) keeps the first video frame
@@ -289,6 +185,7 @@ int main(int argc, char *argv[]) {
     AppInfoViewModel appInfoVM;
     AboutViewModel aboutVM(&i18n);
     PreferencesViewModel preferencesVM;
+    HotkeyViewModel hotkeyVM;
     ThemeViewModel themeVM;
     PropertiesViewModel propertiesVM(&script, &i18n, &undoManager);
     // The grid model is constructed before the edit box so that it rebuilds its
@@ -322,7 +219,10 @@ int main(int argc, char *argv[]) {
     };
     QObject::connect(&videoVM, &VideoViewModel::currentFrameChanged, &documentVM, recordVideoUiState);
     QObject::connect(&videoVM, &VideoViewModel::zoomPercentChanged, &documentVM, recordVideoUiState);
-    auto syncGridPreferences = [&] { gridModel.setHideOverridesChar(preferencesVM.hideOverridesChar()); };
+    auto syncGridPreferences = [&] {
+        gridModel.setHideOverridesChar(preferencesVM.hideOverridesChar());
+        gridModel.setCpsIgnoreOptions(preferencesVM.ignoreWhitespace(), preferencesVM.ignorePunctuation());
+    };
     syncGridPreferences();
     QObject::connect(&preferencesVM, &PreferencesViewModel::optionsChanged, &gridModel, syncGridPreferences);
     // A/V synchronised playback: the video transport starts the audio player at
@@ -351,13 +251,6 @@ int main(int argc, char *argv[]) {
         audioVM.setKeyframeTimesMs(videoVM.keyframeTimesMsVector());
     });
 
-    UndoShortcutFilter undoFilter(&undoManager);
-    app.installEventFilter(&undoFilter);
-
-    // The body TextArea eats Return itself; see BodyEnterFilter.
-    BodyEnterFilter bodyEnterFilter(&editBoxVM);
-    app.installEventFilter(&bodyEnterFilter);
-
     // QML-only wrappers that paint the media view models.
     qmlRegisterType<VideoViewportItem>("Aegisub", 1, 0, "VideoViewport");
     qmlRegisterType<VisualOverlayItem>("Aegisub", 1, 0, "VisualOverlay");
@@ -372,6 +265,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("appInfo", &appInfoVM);
     engine.rootContext()->setContextProperty("aboutVM", &aboutVM);
     engine.rootContext()->setContextProperty("preferencesVM", &preferencesVM);
+    engine.rootContext()->setContextProperty("hotkeyVM", &hotkeyVM);
     engine.rootContext()->setContextProperty("mruVM", &mruVM);
     engine.rootContext()->setContextProperty("logVM", &logVM);
     engine.rootContext()->setContextProperty("automationVM", &automationVM);
@@ -433,8 +327,12 @@ int main(int argc, char *argv[]) {
         root->setProperty("skipLinkedAudio", false);
     }
 
-    MainShortcutFilter mainShortcutFilter(engine.rootObjects().first());
-    app.installEventFilter(&mainShortcutFilter);
+    auto *mainWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    if (!mainWindow)
+        return 1;
+    registerHotkeyCommands(hotkeyVM, mainWindow, preferencesVM, themeVM, gridModel,
+                           editBoxVM, undoManager, videoVM, audioVM, visualToolsVM, automationVM);
+    hotkeyVM.attachMainWindow(mainWindow);
 
     // Open the command-line media only after QML is up: VideoPanel would miss
     // the frameReady() signal emitted during a pre-engine open and show a black
@@ -478,6 +376,8 @@ int main(int argc, char *argv[]) {
     });
 
 #ifdef AEGISUB_STAGE15_TEST
+    if (stage18BTest || stage18BRestart) return runStage18BIntegrationTest(app, engine, stage18BRestart);
+    if (stage18ATest || stage18ARestart) return runStage18AIntegrationTest(engine, stage18ARestart);
     if (stage17CTest) return runStage17CIntegrationTest(engine);
     if (stage17BRestart) return RunStage17BRestartCheck(fontsCollectorVM);
     if (stage17BTest) return RunStage17BIntegrationTest(engine, documentVM, fontsCollectorVM);

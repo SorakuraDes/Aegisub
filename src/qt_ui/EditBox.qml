@@ -9,10 +9,13 @@ import Aegisub 1.0
 // switch) can be pushed in explicitly.
 Rectangle {
     id: editBox
+    readonly property string hotkeyContext: "Subtitle Edit Box"
     color: themeVM.surfaceContainerLow
     radius: themeVM.radiusMedium
 
     AssSyntaxHighlighter {
+        objectName: "assSyntaxHighlighter"
+        colors: preferencesVM.syntaxColors
         target: preferencesVM.syntaxHighlighting ? textArea.textDocument : null
         primary: themeVM.primary
         darkMode: themeVM.darkMode
@@ -59,12 +62,13 @@ Rectangle {
     }
 
     // Shift+Enter: insert a literal ASS hard line break ("\N" in the file).
-    function insertHardLineBreak() {
-        var pos = textArea.cursorPosition
-        var before = textArea.text.substring(0, pos)
-        var after = textArea.text.substring(pos)
-        textArea.text = before + "\\N" + after
-        textArea.cursorPosition = pos + 2
+    function insertLineBreak() {
+        const start = textArea.selectionStart
+        const end = textArea.selectionEnd
+        const marker = preferencesVM.optionValues["Subtitle/Edit Box/Soft Line Break"] ? "\\n" : "\\N"
+        textArea.remove(start, end)
+        textArea.insert(start, marker)
+        textArea.cursorPosition = start + marker.length
     }
 
     ColumnLayout {
@@ -293,9 +297,12 @@ Rectangle {
                 rightPadding: 10
                 topPadding: 8
                 bottomPadding: 8
+                font.family: preferencesVM.editFontFace || Qt.application.font.family
                 font.pointSize: preferencesVM.editFontSize
                 textFormat: TextEdit.PlainText
-                color: themeVM.onSurface
+                color: preferencesVM.syntaxHighlighting
+                       ? (preferencesVM.syntaxColors["Normal"] || themeVM.onSurface)
+                       : themeVM.onSurface
                 wrapMode: TextArea.Wrap
                 enabled: gridModel.activeRow >= 0
                 // Lets Main.qml keep Delete/Insert/Ctrl+D away from text editing.
@@ -310,7 +317,12 @@ Rectangle {
             objectName: "editBoxCharacterCount"
             Layout.alignment: Qt.AlignRight
             visible: gridModel.activeRow >= 0
-            readonly property int count: editBoxVM.longestVisibleLineLength(textArea.text)
+            // Refer to the real settings properties so edits invalidate the binding.
+            readonly property int count: {
+                const ignoreWhitespace = preferencesVM.ignoreWhitespace
+                const ignorePunctuation = preferencesVM.ignorePunctuation
+                return editBoxVM.longestVisibleLineLength(textArea.text)
+            }
             readonly property int limit: preferencesVM.characterLimit
             text: limit > 0 ? count + " / " + limit : String(count)
             color: limit > 0 && count > limit ? themeVM.danger : themeVM.onSurfaceVariant
@@ -337,7 +349,7 @@ Rectangle {
         function onEndTimeChanged() { syncTimeFields() }
         function onDurationChanged() { syncTimeFields() }
         function onAvailableStylesChanged() { loadSelection() }
-        function onLineBreakRequested() { insertHardLineBreak() }
+        function onLineBreakRequested() { insertLineBreak() }
         function onBodyEditorFocusRequested() {
             textArea.forceActiveFocus()
             textArea.selectAll()

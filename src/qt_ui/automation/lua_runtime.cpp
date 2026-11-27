@@ -511,10 +511,12 @@ struct LuaScript::State {
 
     static int log(lua_State* L)
     {
-        const auto& callback = get(L).currentHost().log;
+        const auto& host = get(L).currentHost();
+        const auto& callback = host.log;
         if (!callback) return 0;
         int level = 0;
         if (lua_type(L, 1) == LUA_TNUMBER) {
+            if (host.traceLevel && lua_tointeger(L, 1) > host.traceLevel()) return 0;
             level = integerAt(L, 1).value_or(0);
             lua_remove(L, 1);
         }

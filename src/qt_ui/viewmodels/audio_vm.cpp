@@ -569,6 +569,44 @@ void AudioViewModel::commitLineTiming(int new_start_ms, int new_end_ms) {
     emit viewChanged();
 }
 
+void AudioViewModel::addLeadIn() { applyLead(true); }
+void AudioViewModel::addLeadOut() { applyLead(false); }
+
+void AudioViewModel::applyLead(bool lead_in) {
+    if (!file_ || !grid_model_)
+        return;
+
+    const int64_t configured = config::opt
+        ? OPT_GET(lead_in ? "Audio/Lead/IN" : "Audio/Lead/OUT")->GetInt()
+        : (lead_in ? 100 : 350);
+    const int64_t duration = std::clamp<int64_t>(configured, 0, 36000);
+    if (duration == 0)
+        return;
+
+    bool changed = false;
+    for (int row : grid_model_->sortedSelectedRows()) {
+        auto *line = grid_model_->dialogueAt(row);
+        if (!line)
+            continue;
+
+        auto &endpoint = lead_in ? line->Start : line->End;
+        const int old_ms = int(endpoint);
+        const int64_t target = int64_t(old_ms) + (lead_in ? -duration : duration);
+        const agi::Time updated(int(std::clamp<int64_t>(target, 0, std::numeric_limits<int>::max())));
+        // Compare at ASS precision, after agi::Time applies its upper bound.
+        if (int(updated) != old_ms) {
+            endpoint = updated;
+            changed = true;
+        }
+    }
+
+    if (!changed)
+        return;
+    if (playing_)
+        stopPlayback();
+    aegisub_qt::commit(file_, lead_in ? "Add lead in" : "Add lead out", AssFile::COMMIT_DIAG_TIME);
+}
+
 QString AudioViewModel::formatTime(int ms) const {
     return QString::fromStdString(agi::Time(std::max(0, ms)).GetAssFormatted());
 }

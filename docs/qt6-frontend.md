@@ -4,6 +4,26 @@
 
 > 原则：**wxWidgets 原版构建保持可用**（双轨制），Qt 前端是新入口 `aegisub-qt`，不修改 `src/` 下原版 wx 界面文件与 `libaegisub/` 核心逻辑；新增 Qt 代码只放在 `src/qt_ui/`。
 
+## Stage 18B：共用热键表与 Hotkeys 设置页
+
+- Qt 只读打包原版默认表；有效的 `?user/hotkey.json` 整体替代默认表。热键路由用 `agi::hotkey::Hotkey::Scan`，顺序为启用时的 `Always`、焦点上下文、`Default`；错误配置启动时回退，不在启动时覆写用户文件。保存先用原版 `SetHotkeyMap` 写入同目录临时区并校验，再原子更新用户文件，保留未接管的条目；恢复默认也不删除这些条目。
+- [主窗口](../src/qt_ui/Main.qml)的命令菜单与键盘共享 [C++ 注册表](../src/qt_ui/hotkey_commands.inc)。菜单提示只显示当前上下文实际可用的绑定；原版无对应命令的少量 Qt 动作以 `qt/` 区分。原版默认文件不加 Qt 专用键位：例如行删除是 `Ctrl+Delete`，快跳属于字幕网格和视频，`Ctrl+Space` 聚焦视频定位控件。正文保留本地的 `Shift+Enter`，按原版软换行选项插入 `\n` 或 `\N`。
+- [Preferences](../src/qt_ui/PreferencesWindow.qml)在 Interface 下提供 Hotkeys 页，可按上下文、命令或键位查找，录制、添加或删除绑定，检查同上下文冲突并恢复默认。`Always` 开关沿用 `Audio/Medusa Timing Hotkeys`。
+- [集成测试](../src/qt_ui/stage18b_integration_test.cpp)入口为 `--stage18b`，注册为 `qt-stage18b-hotkeys`，覆盖重新绑键、解绑、冲突、恢复、独立进程重读、未知命令保留、Always、焦点和修饰键隔离。IME 验证使用 Qt 合成的预编辑和提交事件，不等同于 Windows 原生输入法手测。
+
+验收：`bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe` 与无参数全量双轨构建均退出 0。显式构建 Qt 测试目标后，用 Qt 6.6.3 和离屏软件渲染执行 `meson test -C build --no-rebuild -j1 'qt-*'`：**11/11 通过，退出 0**。设置 `AEGISUB_STAGE18B_SCREENSHOTS` 可输出 `preferences-hotkeys-light.png` 与 `preferences-hotkeys-dark.png`；本机已采集到 `.build-tools/stage18b/`（不入库）。
+
+## Stage 18A：Preferences 与分组颜色覆盖
+
+基线 `feature@630a4af68`。本期不迁移 Hotkeys（留给 18B）。修改限定于 Qt 前端和本交接文档。
+
+- [Preferences](../src/qt_ui/PreferencesWindow.qml) 新增 Automation 页和 Interface 下的 Colors 页，保留现有页面编号。Automation 的 Include、Autoload 是 `|` 分隔的路径串；Include 随脚本加载和重载读取，Autoload 在启动与手动 Rescan 时读取，不在保存设置时扫描。Trace Level 约束 Lua 数字日志，无等级日志不筛。Base 和 Autoreload Mode 不提供控件。
+- [Timing 命令与快跳](../src/qt_ui/Main.qml)：Add Lead In/Out 用配置毫秒调整选中行，钳制起点，实际改动单次提交并可撤销；Alt+Left/Right 只在有视频且不在文本输入时按配置快跳。[网格](../src/qt_ui/SubtitleGrid.qml) 与 [EditBox](../src/qt_ui/EditBox.qml) 即时使用字体设置；网格 CPS 与编辑器计数共用忽略选项，CPS 警示随阈值即时重绘。
+- [颜色配置](../src/qt_ui/viewmodels/preferences_vm.cpp) 把四组开关存于 Qt 的 `qt-theme.ini`，原版 RGB 与视觉遮罩 alpha 仍用 `Colour/*` 键写到 `config.json`。关闭覆盖立即恢复主题但保留自定义值。覆盖只更新渲染，不改变全局主题或文档。
+- [新增集成测试](../src/qt_ui/stage18a_integration_test.cpp) 使用现有测试入口 `--stage18a`，注册为 `qt-stage18a-preferences`。设置 `AEGISUB_STAGE18A_SCREENSHOTS` 可输出 Automation、Colors、Interface 及高 CPS 网格的深浅两套截图；本机已输出到 `.build-tools/stage18a/`（不入库）。
+
+验收：`bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe` 和无参数全量双轨均退出 0。显式构建 Qt 测试目标后，用 Qt 6.6.3 SDK 的插件及 QML 路径、隔离 `TEMP/TMP` 和 `QT_QPA_FONTDIR=C:/Windows/Fonts` 执行 `meson test -C build --no-rebuild -j1 'qt-*'`：**10/10 通过，退出 0**。Windows 离屏未指向字体目录时，Qt 会告警，且依赖字体字宽的点击验收可能失败。若源码已经变更但 Ninja 仍不重新编译，先比对改动文件与目标文件的时间戳，再刷新实际改动的 Qt 源文件以避免链接旧对象。
+
 ## Stage 17C：ASS 行折叠与双索引网格
 
 基线 `feature@9427263ce`。折叠存储仍使用原版 `[Aegisub Extradata]` 与对话行 `{=N}` 引用；`_aegi_folddata` 值为 `side;collapsed;id`，由原版 ASS 读写器处理磁盘格式。
@@ -424,7 +444,7 @@ bash .build-tools/build_ninja.sh src/qt_ui/aegisub-qt.exe   # 只编 Qt
 - **网格操作仍有缺口**：已支持插行 / 复制 / 删行 / 多选批量操作（含 Undo/Redo），但键盘范围选择（`Shift+↑/↓`）、拖拽框选、表头点击排序、跨行拖动都没做；`refresh()` / 撤销后的 `refreshPreservingActiveRow()` 仍是全量 `beginResetModel`，行数很多时每次增删都要整体重绘。
 - **查找替换限制**：只在当前文件内搜索（没有跨文件/批量目录替换）；命中只是选中整行，网格里不会高亮具体匹配片段；普通模式替换是字面量（正则模式用 `\1` 反向引用，不支持 `$1` 写法）；`In selection` 只在有多选时生效。
 - **样式管理器限制**：只编辑当前脚本的 `[V4+ Styles]`，不读写样式库/样式目录（`AssStyleStorage`）；未暴露 ScaleX/ScaleY、Spacing、Angle、Encoding；没有颜色选择器（只能填 `#RRGGBB` + Alpha）、不能多选样式；预览是纯 QML `Text`，只反映字体/字号/粗斜下删/主色/描边色，不渲染 ASS 的阴影、不透明度混合等真实效果；删样式不做引用修复（与 wx 版一致，字幕行会保留指向已删除样式的名字）。
-- **菜单/工作区限制**：Qt Quick `Label` 不解析 `&` 助记符，菜单栏标题里的 `&` 被剥掉了（`Alt+F` 这类键盘导航不可用）；菜单项快捷键列是 `ShortcutMenuItem` 自绘的静态文本，真正的按键由 `Shortcut` 元素驱动，两者必须手动保持一致；状态栏编码在新建文档和保存后固定显示 `UTF-8`（保存永远写 UTF-8）。
+- **菜单/工作区限制**：Qt Quick `Label` 不解析 `&` 助记符，菜单栏标题里的 `&` 被剥掉了（`Alt+F` 这类键盘导航不可用）；菜单的快捷键列由 `ShortcutMenuItem` 自绘，并由热键 ViewModel 动态提供提示；状态栏编码在新建文档和保存后固定显示 `UTF-8`（保存永远写 UTF-8）。
 - **大文件性能**：`ListView` 已复用 delegate，但尚无分页/滚动加载。
 - **没有最近文件列表 / 另存时的编码选择器**（当前保存固定 UTF-8，打开时自动检测）。
 - **未保存确认框**：`Save` 分支里如果用户取消了「另存为」系统对话框，原动作（New/Open/退出）会停住而不是继续/中止；没有「稍后再说」以外的记忆。

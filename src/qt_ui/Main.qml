@@ -333,20 +333,17 @@ ApplicationWindow {
     }
 
     readonly property bool hasSelection: gridModel.selectionCount > 0
-    readonly property bool canPasteGrid: !textInputFocused() && !pasteOverDialog.visible && !attachmentsDialog.visible
     readonly property bool canSplit: videoVM.hasVideo && hasSelection
     readonly property bool canJoin: gridModel.selectionCount >= 2
     readonly property bool canJump: videoVM.hasVideo && gridModel.activeRow >= 0
 
-    // Window-scoped shortcuts cannot fire in the auxiliary windows. Also
-    // check the actual editor type, including writable SpinBox internals.
-    function textInputFocused() {
-        for (var item = activeFocusItem; item; item = item.parent) {
-            if (item instanceof TextInput || item instanceof TextEdit || item.isEditBoxField === true)
-                return true
-        }
-        return false
-    }
+    // In-window dialogs share the main QQuickWindow.
+    readonly property bool hotkeysBlocked: unsavedDialog.visible || linkedMediaDialog.visible
+        || jumpDialog.visible || detailsDialog.visible || resampleDialog.visible
+        || attachmentsDialog.visible || languageDialog.visible || exportSubtitlesDialog.visible
+        || automationManagerDialog.visible || automationErrorDialog.visible || automationForm.visible
+        || automationProgress.visible || openDialog.visible || saveAsDialog.visible
+        || videoDialog.visible || audioDialog.visible
 
     function findNext() {
         if (searchVM.query.length === 0)
@@ -388,55 +385,53 @@ ApplicationWindow {
         closeChildWindows()
     }
 
-    // Global shortcuts. The menu items are plain MenuItems (they need a custom
-    // contentItem to show shortcut hints), so the key bindings live here.
-    // Ctrl+Z / Ctrl+Y are handled by main.cpp's key filter.
-    Shortcut { sequence: StandardKey.New; onActivated: mainWindow.requestAction("new") }
-    Shortcut { sequence: StandardKey.Open; onActivated: mainWindow.requestAction("open") }
-    // Ctrl+S / Ctrl+Shift+S are handled by main.cpp's MainShortcutFilter (the
-    // QML Shortcut matcher cannot tell them apart for letter keys).
-    Shortcut { sequence: StandardKey.Quit; onActivated: mainWindow.close() }
-    Shortcut { sequence: StandardKey.Find; onActivated: mainWindow.openSearch(false) }
-    Shortcut { sequence: StandardKey.Replace; onActivated: mainWindow.openSearch(true) }
-    // Shift Times (Aegisub's subtitle/shift times; Ctrl+I matches the wx frontend).
-    Shortcut { sequence: "Ctrl+I"; onActivated: mainWindow.openShiftTimes() }
-
-    // Row actions, kept away from the text editors above.
-    Shortcut {
-        sequence: "Delete"
-        enabled: !mainWindow.textInputFocused() && gridModel.selectionCount > 0
-        onActivated: gridModel.deleteSelectedRows()
-    }
-    Shortcut { sequence: "Ctrl+X"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.cutSelectedRows() }
-    Shortcut { sequence: "Ctrl+C"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.copySelectedRows() }
-    // MainShortcutFilter distinguishes Ctrl+V from Ctrl+Shift+V.
-    Shortcut { sequence: "Alt+Up"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.moveSelectedRows(-1) }
-    Shortcut { sequence: "Alt+Down"; enabled: !mainWindow.textInputFocused() && mainWindow.hasSelection; onActivated: gridModel.moveSelectedRows(1) }
-    Shortcut { sequence: "F3"; onActivated: mainWindow.findNext() }
-    Shortcut { sequence: "Alt+O"; onActivated: mainWindow.openWindow("preferences") }
-    Shortcut { sequence: "Ctrl+G"; enabled: videoVM.hasVideo && !jumpDialog.visible; onActivated: jumpDialog.open() }
-    Shortcut { sequence: "Ctrl+1"; enabled: mainWindow.canJump; onActivated: videoVM.seekToActiveLine() }
-    Shortcut { sequence: "Ctrl+2"; enabled: mainWindow.canJump; onActivated: videoVM.seekToActiveLineEnd() }
-    Shortcut { sequence: "Ctrl+3"; enabled: mainWindow.canSplit; onActivated: gridModel.snapToVideo(true) }
-    Shortcut { sequence: "Ctrl+4"; enabled: mainWindow.canSplit; onActivated: gridModel.snapToVideo(false) }
-    // The C++ key filter distinguishes Ctrl+D from Ctrl+Shift+D.
-    function splitBeforeFrame() { if (canSplit) gridModel.splitAtVideoFrame(true) }
-    function splitAfterFrame() { if (canSplit) gridModel.splitAtVideoFrame(false) }
-
-    Shortcut {
-        sequence: StandardKey.SelectAll
-        enabled: !mainWindow.textInputFocused()
-        onActivated: gridModel.selectAll()
-    }
-
-    // Audio waveform: play the active line's range.
-    Shortcut {
-        sequence: "Ctrl+Space"
-        enabled: audioVM.hasAudio
-        onActivated: audioVM.playSelection()
-    }
-
     // ---- Compact desktop menu bar ----------------------------------------
+
+    component CommandMenuItem: ShortcutMenuItem {
+        property string commandId
+        property string hotkeyContext: "Default"
+        shortcutText: {
+            hotkeyVM.revision
+            return hotkeyVM.menuShortcut(commandId, hotkeyContext)
+        }
+        onTriggered: hotkeyVM.dispatch(commandId)
+    }
+
+    function showCommandUi(commandId) {
+        switch (commandId) {
+        case "subtitle/new": mainWindow.requestAction("new"); break
+        case "subtitle/open": mainWindow.requestAction("open"); break
+        case "subtitle/save": mainWindow.saveDocument(); break
+        case "subtitle/save/as": saveAsDialog.open(); break
+        case "tool/export": exportSubtitlesDialog.open(); break
+        case "subtitle/properties": mainWindow.openWindow("properties"); break
+        case "subtitle/attachment": mainWindow.openAttachments(); break
+        case "tool/font_collector": mainWindow.openFontsCollector(); break
+        case "app/exit": mainWindow.close(); break
+        case "edit/line/paste/over": mainWindow.openPasteOver(); break
+        case "subtitle/find": mainWindow.openSearch(false); break
+        case "subtitle/find/next": mainWindow.findNext(); break
+        case "edit/find_replace": mainWindow.openSearch(true); break
+        case "tool/style/manager": mainWindow.openStyles(); break
+        case "tool/resampleres": resampleDialog.open(); break
+        case "tool/line/select": mainWindow.openSelectLines(); break
+        case "time/shift": mainWindow.openShiftTimes(); break
+        case "video/open": videoDialog.open(); break
+        case "video/details": detailsDialog.open(); break
+        case "video/jump": jumpDialog.open(); break
+        case "audio/open": audioDialog.open(); break
+        case "am/manager": Qt.callLater(() => automationManagerDialog.open()); break
+        case "am/reload/autoload": Qt.callLater(() => automationVM.reloadAutoload()); break
+        case "app/language": languageDialog.open(); break
+        case "app/options": mainWindow.openWindow("preferences"); break
+        case "app/about": mainWindow.openWindow("about"); break
+        case "app/log": mainWindow.openWindow("log"); break
+        case "app/display/subs": mainWindow.workspaceLayout = 0; break
+        case "app/display/video_subs": mainWindow.workspaceLayout = 1; break
+        case "app/display/audio_subs": mainWindow.workspaceLayout = 2; break
+        case "app/display/full": mainWindow.workspaceLayout = 3; break
+        }
+    }
 
     menuBar: MenuBar {
         id: mainMenuBar
@@ -475,153 +470,151 @@ ApplicationWindow {
             title: i18n.t("File")
             width: 310
             delegate: ShortcutMenuItem {}
-            ShortcutMenuItem { text: i18n.t("New Subtitles"); shortcutText: "Ctrl+N"; onTriggered: mainWindow.requestAction("new") }
-            ShortcutMenuItem { text: i18n.t("Open Subtitles..."); shortcutText: "Ctrl+O"; onTriggered: mainWindow.requestAction("open") }
-            ShortcutMenuItem { text: i18n.t("Save Subtitles"); shortcutText: "Ctrl+S"; onTriggered: mainWindow.saveDocument() }
-            ShortcutMenuItem { text: i18n.t("Save Subtitles as..."); shortcutText: "Ctrl+Shift+S"; onTriggered: saveAsDialog.open() }
-            ShortcutMenuItem {
+            CommandMenuItem { text: i18n.t("New Subtitles"); commandId: "subtitle/new"}
+            CommandMenuItem { text: i18n.t("Open Subtitles..."); commandId: "subtitle/open"}
+            CommandMenuItem { text: i18n.t("Save Subtitles"); commandId: "subtitle/save"}
+            CommandMenuItem { text: i18n.t("Save Subtitles as..."); commandId: "subtitle/save/as"}
+            CommandMenuItem {
                 objectName: "exportSubtitlesMenuItem"
                 text: i18n.t("&Export Subtitles...")
                 enabled: !automationVM.busy
-                onTriggered: exportSubtitlesDialog.open()
+                commandId: "tool/export"
             }
             RecentMenu { objectName: "recentSubtitlesMenu"; paths: mruVM.subtitles; onOpenPath: path => mainWindow.requestAction("recent", path) }
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Properties..."); onTriggered: mainWindow.openWindow("properties") }
-            ShortcutMenuItem { objectName: "attachmentsMenuItem"; text: i18n.t("Attachments..."); onTriggered: mainWindow.openAttachments() }
-            ShortcutMenuItem { objectName: "fontsCollectorMenuItem"; text: i18n.t("Fonts Collector..."); onTriggered: mainWindow.openFontsCollector() }
+            CommandMenuItem { text: i18n.t("Properties..."); commandId: "subtitle/properties"}
+            CommandMenuItem { objectName: "attachmentsMenuItem"; text: i18n.t("Attachments..."); commandId: "subtitle/attachment"}
+            CommandMenuItem { objectName: "fontsCollectorMenuItem"; text: i18n.t("Fonts Collector..."); commandId: "tool/font_collector"}
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Exit"); shortcutText: "Ctrl+Q"; onTriggered: mainWindow.close() }
+            CommandMenuItem { text: i18n.t("Exit"); commandId: "app/exit"}
         }
 
         Menu {
             title: i18n.t("Edit")
             width: 295
-            ShortcutMenuItem {
+            CommandMenuItem {
                 // Dynamic label in the style of the wxWidgets frontend:
                 // "Undo <what will be undone>".
                 text: undoVM.canUndo && undoVM.undoDescription.length > 0
                       ? i18n.t("Undo") + " " + undoVM.undoDescription
                       : i18n.t("Undo")
-                shortcutText: "Ctrl+Z"
                 enabled: undoVM.canUndo
-                onTriggered: undoVM.undo()
+                commandId: "edit/undo"
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: undoVM.canRedo && undoVM.redoDescription.length > 0
                       ? i18n.t("Redo") + " " + undoVM.redoDescription
                       : i18n.t("Redo")
-                shortcutText: "Ctrl+Y"
                 enabled: undoVM.canRedo
-                onTriggered: undoVM.redo()
+                commandId: "edit/redo"
             }
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Cut Lines"); shortcutText: "Ctrl+X"; enabled: mainWindow.hasSelection; onTriggered: gridModel.cutSelectedRows() }
-            ShortcutMenuItem { text: i18n.t("Copy Lines"); shortcutText: "Ctrl+C"; enabled: mainWindow.hasSelection; onTriggered: gridModel.copySelectedRows() }
-            ShortcutMenuItem { text: i18n.t("Paste Lines"); shortcutText: "Ctrl+V"; onTriggered: gridModel.pasteRows() }
-            ShortcutMenuItem { objectName: "pasteOverMenuItem"; text: i18n.t("Paste Lines Over..."); shortcutText: "Ctrl+Shift+V"; enabled: mainWindow.hasSelection; onTriggered: mainWindow.openPasteOver() }
+            CommandMenuItem { text: i18n.t("Cut Lines"); enabled: mainWindow.hasSelection; commandId: "edit/line/cut"}
+            CommandMenuItem { text: i18n.t("Copy Lines"); enabled: mainWindow.hasSelection; commandId: "edit/line/copy"}
+            CommandMenuItem { text: i18n.t("Paste Lines"); commandId: "edit/line/paste"}
+            CommandMenuItem { objectName: "pasteOverMenuItem"; text: i18n.t("Paste Lines Over..."); enabled: mainWindow.hasSelection; commandId: "edit/line/paste/over"}
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Find..."); shortcutText: "Ctrl+F"; onTriggered: mainWindow.openSearch(false) }
-            ShortcutMenuItem { text: i18n.t("Find Next"); shortcutText: "F3"; onTriggered: mainWindow.findNext() }
-            ShortcutMenuItem { text: i18n.t("Find and Replace..."); shortcutText: "Ctrl+H"; onTriggered: mainWindow.openSearch(true) }
+            CommandMenuItem { text: i18n.t("Find..."); commandId: "subtitle/find"}
+            CommandMenuItem { text: i18n.t("Find Next"); commandId: "subtitle/find/next"}
+            CommandMenuItem { text: i18n.t("Find and Replace..."); commandId: "edit/find_replace"}
         }
 
         Menu {
             title: i18n.t("Subtitle")
             width: 365
             delegate: ShortcutMenuItem {}
-            ShortcutMenuItem { text: i18n.t("Styles Manager..."); onTriggered: mainWindow.openStyles() }
-            ShortcutMenuItem { text: i18n.t("Resample Resolution..."); onTriggered: resampleDialog.open() }
+            CommandMenuItem { text: i18n.t("Styles Manager..."); commandId: "tool/style/manager"}
+            CommandMenuItem { text: i18n.t("Resample Resolution..."); commandId: "tool/resampleres"}
             MenuSeparator {}
             Menu {
                 title: i18n.t("Insert Lines")
                 width: 210
-                ShortcutMenuItem { text: i18n.t("Before Current"); onTriggered: gridModel.insertBefore(gridModel.activeRow) }
-                ShortcutMenuItem { text: i18n.t("After Current"); onTriggered: gridModel.insertAfter(gridModel.activeRow) }
-                ShortcutMenuItem { text: i18n.t("Before Current, at Video Time"); enabled: videoVM.hasVideo; onTriggered: gridModel.insertAtVideoTime(false) }
-                ShortcutMenuItem { text: i18n.t("After Current, at Video Time"); enabled: videoVM.hasVideo; onTriggered: gridModel.insertAtVideoTime(true) }
+                CommandMenuItem { text: i18n.t("Before Current"); commandId: "subtitle/insert/before"}
+                CommandMenuItem { text: i18n.t("After Current"); commandId: "subtitle/insert/after"}
+                CommandMenuItem { text: i18n.t("Before Current, at Video Time"); enabled: videoVM.hasVideo; commandId: "subtitle/insert/before/videotime"}
+                CommandMenuItem { text: i18n.t("After Current, at Video Time"); enabled: videoVM.hasVideo; commandId: "subtitle/insert/after/videotime"}
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("Duplicate Lines")
                 enabled: mainWindow.hasSelection
-                onTriggered: gridModel.duplicateSelectedRows()
+                commandId: "edit/line/duplicate"
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("Split lines before current frame")
-                shortcutText: "Ctrl+D"
                 enabled: mainWindow.canSplit
-                onTriggered: mainWindow.splitBeforeFrame()
+                commandId: "edit/line/split/before"
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("Split lines after current frame")
-                shortcutText: "Ctrl+Shift+D"
                 enabled: mainWindow.canSplit
-                onTriggered: mainWindow.splitAfterFrame()
+                commandId: "edit/line/split/after"
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("Delete Lines")
-                shortcutText: "Delete"
                 enabled: mainWindow.hasSelection
-                onTriggered: gridModel.deleteSelectedRows()
+                commandId: "edit/line/delete"
             }
             MenuSeparator {}
             Menu {
                 id: joinLinesMenu
                 title: i18n.t("Join Lines")
                 width: 210
-                ShortcutMenuItem { text: i18n.t("Concatenate"); enabled: mainWindow.canJoin; onTriggered: gridModel.joinSelectedRows(true) }
-                ShortcutMenuItem { text: i18n.t("Keep First"); enabled: mainWindow.canJoin; onTriggered: gridModel.joinSelectedRows(false) }
+                CommandMenuItem { text: i18n.t("Concatenate"); enabled: mainWindow.canJoin; commandId: "edit/line/join/concatenate"}
+                CommandMenuItem { text: i18n.t("Keep First"); enabled: mainWindow.canJoin; commandId: "edit/line/join/keep_first"}
             }
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Open all Folds"); enabled: gridModel.hasFolds; onTriggered: gridModel.openAllFolds() }
-            ShortcutMenuItem { text: i18n.t("Close all Folds"); enabled: gridModel.hasFolds; onTriggered: gridModel.closeAllFolds() }
-            ShortcutMenuItem { text: i18n.t("Clear all Folds"); enabled: gridModel.hasFolds; onTriggered: gridModel.clearAllFolds() }
+            CommandMenuItem { text: i18n.t("Open all Folds"); enabled: gridModel.hasFolds; commandId: "grid/fold/open_all"}
+            CommandMenuItem { text: i18n.t("Close all Folds"); enabled: gridModel.hasFolds; commandId: "grid/fold/close_all"}
+            CommandMenuItem { text: i18n.t("Clear all Folds"); enabled: gridModel.hasFolds; commandId: "grid/fold/clear_all"}
             MenuSeparator {}
             Menu {
                 title: i18n.t("Sort All Lines")
                 width: 210
-                ShortcutMenuItem { text: i18n.t("Start Time"); onTriggered: gridModel.sortAllLines(0) }
-                ShortcutMenuItem { text: i18n.t("End Time"); onTriggered: gridModel.sortAllLines(1) }
-                ShortcutMenuItem { text: i18n.t("Style Name"); onTriggered: gridModel.sortAllLines(2) }
-                ShortcutMenuItem { text: i18n.t("Actor Name"); onTriggered: gridModel.sortAllLines(3) }
-                ShortcutMenuItem { text: i18n.t("Effect"); onTriggered: gridModel.sortAllLines(4) }
-                ShortcutMenuItem { text: i18n.t("Text"); onTriggered: gridModel.sortAllLines(6) }
-                ShortcutMenuItem { text: i18n.t("Stripped Text"); onTriggered: gridModel.sortAllLines(7) }
-                ShortcutMenuItem { text: i18n.t("Layer"); onTriggered: gridModel.sortAllLines(5) }
+                CommandMenuItem { text: i18n.t("Start Time"); commandId: "grid/sort/start"}
+                CommandMenuItem { text: i18n.t("End Time"); commandId: "grid/sort/end"}
+                CommandMenuItem { text: i18n.t("Style Name"); commandId: "grid/sort/style"}
+                CommandMenuItem { text: i18n.t("Actor Name"); commandId: "grid/sort/actor"}
+                CommandMenuItem { text: i18n.t("Effect"); commandId: "grid/sort/effect"}
+                CommandMenuItem { text: i18n.t("Text"); commandId: "grid/sort/text"}
+                CommandMenuItem { text: i18n.t("Stripped Text"); commandId: "grid/sort/text_stripped"}
+                CommandMenuItem { text: i18n.t("Layer"); commandId: "grid/sort/layer"}
             }
             Menu {
                 title: i18n.t("Sort Selected Lines")
                 width: 210
-                ShortcutMenuItem { text: i18n.t("Start Time"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(0) }
-                ShortcutMenuItem { text: i18n.t("End Time"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(1) }
-                ShortcutMenuItem { text: i18n.t("Style Name"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(2) }
-                ShortcutMenuItem { text: i18n.t("Actor Name"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(3) }
-                ShortcutMenuItem { text: i18n.t("Effect"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(4) }
-                ShortcutMenuItem { text: i18n.t("Text"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(6) }
-                ShortcutMenuItem { text: i18n.t("Stripped Text"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(7) }
-                ShortcutMenuItem { text: i18n.t("Layer"); enabled: mainWindow.canJoin; onTriggered: gridModel.sortSelectedLines(5) }
+                CommandMenuItem { text: i18n.t("Start Time"); enabled: mainWindow.canJoin; commandId: "grid/sort/start/selected"}
+                CommandMenuItem { text: i18n.t("End Time"); enabled: mainWindow.canJoin; commandId: "grid/sort/end/selected"}
+                CommandMenuItem { text: i18n.t("Style Name"); enabled: mainWindow.canJoin; commandId: "grid/sort/style/selected"}
+                CommandMenuItem { text: i18n.t("Actor Name"); enabled: mainWindow.canJoin; commandId: "grid/sort/actor/selected"}
+                CommandMenuItem { text: i18n.t("Effect"); enabled: mainWindow.canJoin; commandId: "grid/sort/effect/selected"}
+                CommandMenuItem { text: i18n.t("Text"); enabled: mainWindow.canJoin; commandId: "grid/sort/text/selected"}
+                CommandMenuItem { text: i18n.t("Stripped Text"); enabled: mainWindow.canJoin; commandId: "grid/sort/text_stripped/selected"}
+                CommandMenuItem { text: i18n.t("Layer"); enabled: mainWindow.canJoin; commandId: "grid/sort/layer/selected"}
             }
-            ShortcutMenuItem { text: i18n.t("Swap Lines"); enabled: gridModel.selectionCount === 2; onTriggered: gridModel.swapSelectedLines() }
-            ShortcutMenuItem { objectName: "selectLinesMenuItem"; text: i18n.t("Select Lines..."); onTriggered: mainWindow.openSelectLines() }
-            ShortcutMenuItem { text: i18n.t("Select All"); shortcutText: "Ctrl+A"; onTriggered: gridModel.selectAll() }
+            CommandMenuItem { text: i18n.t("Swap Lines"); enabled: gridModel.selectionCount === 2; commandId: "grid/swap"}
+            CommandMenuItem { objectName: "selectLinesMenuItem"; text: i18n.t("Select Lines..."); commandId: "tool/line/select"}
+            CommandMenuItem { text: i18n.t("Select All"); commandId: "subtitle/select/all"; hotkeyContext: "Subtitle Grid"}
         }
 
         Menu {
             title: i18n.t("Timing")
             width: 290
             delegate: ShortcutMenuItem {}
-            ShortcutMenuItem { text: i18n.t("Shift Times..."); shortcutText: "Ctrl+I"; onTriggered: mainWindow.openShiftTimes() }
+            CommandMenuItem { text: i18n.t("Shift Times..."); commandId: "time/shift"}
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Snap Start to Video"); shortcutText: "Ctrl+3"; enabled: mainWindow.canSplit; onTriggered: gridModel.snapToVideo(true) }
-            ShortcutMenuItem { text: i18n.t("Snap End to Video"); shortcutText: "Ctrl+4"; enabled: mainWindow.canSplit; onTriggered: gridModel.snapToVideo(false) }
-            ShortcutMenuItem { text: i18n.t("Shift to Current Frame"); enabled: mainWindow.canSplit; onTriggered: gridModel.shiftSelectionToCurrentFrame() }
+            CommandMenuItem { text: i18n.t("Snap Start to Video"); enabled: mainWindow.canSplit; commandId: "time/snap/start_video"}
+            CommandMenuItem { text: i18n.t("Snap End to Video"); enabled: mainWindow.canSplit; commandId: "time/snap/end_video"}
+            CommandMenuItem { text: i18n.t("Shift to Current Frame"); enabled: mainWindow.canSplit; commandId: "time/frame/current"}
             MenuSeparator {}
             Menu {
                 title: i18n.t("Make Times Continuous")
                 width: 210
-                ShortcutMenuItem { text: i18n.t("Change Start"); enabled: mainWindow.canJoin; onTriggered: gridModel.makeTimesContinuous(true) }
-                ShortcutMenuItem { text: i18n.t("Change End"); enabled: mainWindow.canJoin; onTriggered: gridModel.makeTimesContinuous(false) }
+                CommandMenuItem { text: i18n.t("Change Start"); enabled: mainWindow.canJoin; commandId: "time/continuous/start"}
+                CommandMenuItem { text: i18n.t("Change End"); enabled: mainWindow.canJoin; commandId: "time/continuous/end"}
             }
+            MenuSeparator {}
+            CommandMenuItem { objectName: "addLeadInMenuItem"; text: i18n.t("Add lead in"); enabled: mainWindow.hasSelection; commandId: "time/lead/in"; hotkeyContext: "Audio"}
+            CommandMenuItem { objectName: "addLeadOutMenuItem"; text: i18n.t("Add lead out"); enabled: mainWindow.hasSelection; commandId: "time/lead/out"; hotkeyContext: "Audio"}
         }
 
         Menu {
@@ -629,64 +622,64 @@ ApplicationWindow {
             objectName: "videoMenu"
             width: 300
             delegate: ShortcutMenuItem {}
-            ShortcutMenuItem { text: i18n.t("Open Video..."); onTriggered: videoDialog.open() }
-            ShortcutMenuItem { text: i18n.t("Close Video"); enabled: videoVM.hasVideo; onTriggered: videoVM.closeVideo() }
+            CommandMenuItem { text: i18n.t("Open Video..."); commandId: "video/open"}
+            CommandMenuItem { text: i18n.t("Close Video"); enabled: videoVM.hasVideo; commandId: "video/close"}
             RecentMenu { objectName: "recentVideosMenu"; paths: mruVM.videos; onOpenPath: path => videoVM.openLocalPath(path) }
-            ShortcutMenuItem { text: i18n.t("Use Dummy Video..."); onTriggered: videoVM.openDummyVideo(0, 0, 0, 0) }
-            ShortcutMenuItem { text: i18n.t("Show Video Details"); enabled: videoVM.hasVideo; onTriggered: detailsDialog.open() }
+            CommandMenuItem { text: i18n.t("Use Dummy Video..."); commandId: "video/open/dummy"}
+            CommandMenuItem { text: i18n.t("Show Video Details"); enabled: videoVM.hasVideo; commandId: "video/details"}
             MenuSeparator {}
             Menu {
                 objectName: "zoomMenu"
                 title: i18n.t("Set Zoom")
                 enabled: videoVM.hasVideo
-                ShortcutMenuItem { text: i18n.t("Fit"); checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 0; onTriggered: videoVM.zoomPercent = 0 }
-                ShortcutMenuItem { text: "50%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 50; onTriggered: videoVM.zoomPercent = 50 }
-                ShortcutMenuItem { text: "100%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 100; onTriggered: videoVM.zoomPercent = 100 }
-                ShortcutMenuItem { text: "200%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 200; onTriggered: videoVM.zoomPercent = 200 }
+                CommandMenuItem { text: i18n.t("Fit"); checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 0; commandId: "qt/video/zoom/fit"; hotkeyContext: "Video"}
+                CommandMenuItem { text: "50%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 50; commandId: "video/zoom/50"; hotkeyContext: "Video"}
+                CommandMenuItem { text: "100%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 100; commandId: "video/zoom/100"; hotkeyContext: "Video"}
+                CommandMenuItem { text: "200%"; checkable: true; autoExclusive: true; checked: videoVM.zoomPercent === 200; commandId: "video/zoom/200"; hotkeyContext: "Video"}
             }
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Jump to..."); shortcutText: "Ctrl+G"; enabled: videoVM.hasVideo; onTriggered: jumpDialog.open() }
-            ShortcutMenuItem { text: i18n.t("Jump Video to Start"); shortcutText: "Ctrl+1"; enabled: mainWindow.canJump; onTriggered: videoVM.seekToActiveLine() }
-            ShortcutMenuItem { text: i18n.t("Jump Video to End"); shortcutText: "Ctrl+2"; enabled: mainWindow.canJump; onTriggered: videoVM.seekToActiveLineEnd() }
+            CommandMenuItem { text: i18n.t("Jump to..."); enabled: videoVM.hasVideo; commandId: "video/jump"}
+            CommandMenuItem { text: i18n.t("Jump Video to Start"); enabled: mainWindow.canJump; commandId: "video/jump/start"}
+            CommandMenuItem { text: i18n.t("Jump Video to End"); enabled: mainWindow.canJump; commandId: "video/jump/end"}
         }
 
         Menu {
             title: i18n.t("Audio")
             width: 300
             delegate: ShortcutMenuItem {}
-            ShortcutMenuItem { text: i18n.t("Open Audio File..."); onTriggered: audioDialog.open() }
-            ShortcutMenuItem {
+            CommandMenuItem { text: i18n.t("Open Audio File..."); commandId: "audio/open"}
+            CommandMenuItem {
                 text: i18n.t("Open Audio from Video")
                 enabled: videoVM.hasVideo && videoVM.filePath.length > 0
-                onTriggered: audioVM.openLocalPath(videoVM.filePath)
+                commandId: "audio/open/video"
             }
-            ShortcutMenuItem { text: i18n.t("Select Audio Track..."); enabled: audioVM.hasAudio; onTriggered: audioVM.openAudioTrackPicker() }
-            ShortcutMenuItem { text: i18n.t("Close Audio"); enabled: audioVM.hasAudio; onTriggered: audioVM.closeAudio() }
+            CommandMenuItem { text: i18n.t("Select Audio Track..."); enabled: audioVM.hasAudio; commandId: "qt/audio/select_track"}
+            CommandMenuItem { text: i18n.t("Close Audio"); enabled: audioVM.hasAudio; commandId: "audio/close"}
             RecentMenu { objectName: "recentAudioMenu"; paths: mruVM.audio; onOpenPath: path => audioVM.openLocalPath(path) }
-            ShortcutMenuItem { text: i18n.t("Use Dummy Audio"); onTriggered: audioVM.openDummyAudio() }
+            CommandMenuItem { text: i18n.t("Use Dummy Audio"); commandId: "qt/audio/open/dummy"}
             MenuSeparator {}
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("Spectrum Display")
                 checkable: true
                 autoExclusive: true
                 checked: audioVM.spectrumMode
-                onTriggered: audioVM.spectrumMode = true
+                commandId: "audio/view/spectrum"
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("Waveform Display")
                 checkable: true
                 autoExclusive: true
                 checked: !audioVM.spectrumMode
-                onTriggered: audioVM.spectrumMode = false
+                commandId: "audio/view/waveform"
             }
             MenuSeparator {}
-            ShortcutMenuItem { text: i18n.t("Play Line"); shortcutText: "Ctrl+Space"; enabled: audioVM.hasAudio; onTriggered: audioVM.playSelection() }
-            ShortcutMenuItem { text: i18n.t("Stop"); enabled: audioVM.hasAudio && audioVM.isPlaying; onTriggered: audioVM.stop() }
-            ShortcutMenuItem {
+            CommandMenuItem { text: i18n.t("Play Line"); enabled: audioVM.hasAudio; commandId: "audio/play/line"; hotkeyContext: "Audio"}
+            CommandMenuItem { text: i18n.t("Stop"); enabled: audioVM.hasAudio && audioVM.isPlaying; commandId: "audio/stop"; hotkeyContext: "Audio"}
+            CommandMenuItem {
                 text: i18n.t("Follow Playhead")
                 checkable: true
                 checked: audioVM.followPlayhead
-                onTriggered: audioVM.followPlayhead = checked
+                commandId: "qt/audio/follow_playhead"
             }
         }
 
@@ -704,15 +697,15 @@ ApplicationWindow {
                 firstMacroIndex: 3
             }
 
-            ShortcutMenuItem {
+            CommandMenuItem {
                 objectName: "automationManagerMenuItem"
                 text: i18n.t("Automation...")
-                onTriggered: Qt.callLater(() => automationManagerDialog.open())
+                commandId: "am/manager"
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 objectName: "automationReloadAutoloadMenuItem"
                 text: i18n.t("Reload autoload Automation scripts")
-                onTriggered: Qt.callLater(() => automationVM.reloadAutoload())
+                commandId: "am/reload/autoload"
             }
             MenuSeparator {
                 objectName: "automationMacroSeparator"
@@ -724,44 +717,43 @@ ApplicationWindow {
         Menu {
             title: i18n.t("View")
             width: 240
-            ShortcutMenuItem {
+            CommandMenuItem {
                 objectName: "languageMenuItem"
                 text: i18n.t("Language") + "..."
-                onTriggered: languageDialog.open()
+                commandId: "app/language"
             }
-            ShortcutMenuItem {
+            CommandMenuItem {
                 icon.source: "qrc:/icons/settings.svg"
                 text: i18n.t("Options...")
-                shortcutText: "Alt+O"
-                onTriggered: mainWindow.openWindow("preferences")
+                commandId: "app/options"
             }
             MenuSeparator {}
             ButtonGroup { id: workspaceGroup }
-            ShortcutMenuItem { text: i18n.t("Subs Only View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 0; onTriggered: mainWindow.workspaceLayout = 0 }
-            ShortcutMenuItem { text: i18n.t("Video+Subs View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 1; onTriggered: mainWindow.workspaceLayout = 1 }
-            ShortcutMenuItem { text: i18n.t("Audio+Subs View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 2; onTriggered: mainWindow.workspaceLayout = 2 }
-            ShortcutMenuItem { text: i18n.t("Full view"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 3; onTriggered: mainWindow.workspaceLayout = 3 }
+            CommandMenuItem { text: i18n.t("Subs Only View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 0; commandId: "app/display/subs"}
+            CommandMenuItem { text: i18n.t("Video+Subs View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 1; commandId: "app/display/video_subs"}
+            CommandMenuItem { text: i18n.t("Audio+Subs View"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 2; commandId: "app/display/audio_subs"}
+            CommandMenuItem { text: i18n.t("Full view"); checkable: true; ButtonGroup.group: workspaceGroup; checked: mainWindow.workspaceLayout === 3; commandId: "app/display/full"}
             MenuSeparator {}
             ButtonGroup { id: tagGroup }
-            ShortcutMenuItem { text: i18n.t("Show Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 0; onTriggered: gridModel.tagDisplayMode = 0 }
-            ShortcutMenuItem { text: i18n.t("Simplify Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 1; onTriggered: gridModel.tagDisplayMode = 1 }
-            ShortcutMenuItem { text: i18n.t("Hide Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 2; onTriggered: gridModel.tagDisplayMode = 2 }
+            CommandMenuItem { text: i18n.t("Show Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 0; commandId: "grid/tags/show"}
+            CommandMenuItem { text: i18n.t("Simplify Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 1; commandId: "grid/tags/simplify"}
+            CommandMenuItem { text: i18n.t("Hide Tags"); checkable: true; ButtonGroup.group: tagGroup; checked: gridModel.tagDisplayMode === 2; commandId: "grid/tags/hide"}
             MenuSeparator {}
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("Dark Mode")
                 checkable: true
                 checked: themeVM.darkMode
-                onTriggered: themeVM.darkMode = checked
+                commandId: "qt/app/dark_mode"
             }
         }
 
         Menu {
             title: i18n.t("Help")
-            ShortcutMenuItem {
+            CommandMenuItem {
                 text: i18n.t("About")
-                onTriggered: mainWindow.openWindow("about")
+                commandId: "app/about"
             }
-            ShortcutMenuItem { text: i18n.t("Log Window"); onTriggered: mainWindow.openWindow("log") }
+            CommandMenuItem { text: i18n.t("Log Window"); commandId: "app/log"}
         }
     }
 
@@ -771,6 +763,7 @@ ApplicationWindow {
     AutomationManagerDialog { id: automationManagerDialog }
     LuaDialog { id: automationForm }
     AutomationProgressDialog {
+        id: automationProgress
         visible: automationVM.progressVisible && !dismissed && !mainWindow.pendingCloseAfterAutomation
     }
     AutomationFileDialog { id: automationPicker }

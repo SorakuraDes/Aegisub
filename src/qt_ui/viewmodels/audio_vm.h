@@ -127,6 +127,8 @@ public:
     /// COMMIT_DIAG_TIME commit (single undo step; grid/edit box/video react
     /// through the normal AssFile::Commit bus).
     Q_INVOKABLE void commitLineTiming(int new_start_ms, int new_end_ms);
+    Q_INVOKABLE void addLeadIn();
+    Q_INVOKABLE void addLeadOut();
     Q_INVOKABLE QString formatTime(int ms) const;
 
     /// The waveform widget reports its width so the view model can clamp and
@@ -171,6 +173,7 @@ private:
     bool openLocalPathImpl(const QString &path, int trackId, bool interactive, bool quiet,
                            bool fromVideo = false);
     void refreshActiveTimes();
+    void applyLead(bool lead_in);
     void setError(const QString &message);
     void resetError();
     void stopPlayback();

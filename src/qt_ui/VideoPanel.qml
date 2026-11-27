@@ -7,6 +7,7 @@ import Aegisub 1.0
 
 Item {
     id: root
+    readonly property string hotkeyContext: "Video"
 
     component TransportButton: CompactIconButton {
         implicitWidth: 28
@@ -139,6 +140,7 @@ Item {
             VideoViewport {
                 id: videoSurface
                 objectName: "videoViewport"
+                TapHandler { onTapped: videoSurface.forceActiveFocus(Qt.MouseFocusReason) }
                 zoomPercent: videoVM.zoomPercent
                 clip: true
                 Accessible.role: Accessible.Graphic
@@ -151,8 +153,12 @@ Item {
                     anchors.fill: parent
                     viewport: videoSurface
                     viewModel: visualToolsVM
-                    accentColor: themeVM.primary
-                    highlightColor: themeVM.secondary
+                    accentColor: preferencesVM.visualColors["Lines Primary"] || themeVM.primary
+                    highlightColor: preferencesVM.visualColors["Highlight Primary"] || themeVM.secondary
+                    shadedAreaAlpha: {
+                        const alpha = preferencesVM.visualColors["Shaded Area Alpha"]
+                        return alpha === undefined ? 115 / 255 : alpha
+                    }
                 }
 
                 Label {
@@ -208,6 +214,7 @@ Item {
 
                 Slider {
                     id: seekSlider
+                    objectName: "videoSeekSlider"
                     Layout.alignment: Qt.AlignVCenter
                     Layout.fillWidth: true
                     Layout.minimumWidth: 32

@@ -4,26 +4,35 @@ import QtQuick.Layouts
 
 Rectangle {
     id: grid
+    readonly property string hotkeyContext: "Subtitle Grid"
     color: themeVM.surface
     radius: themeVM.radiusMedium
 
     readonly property real gridFontSize: Math.max(3, preferencesVM.gridFontSize)
+    readonly property string gridFontFamily: preferencesVM.gridFontFace || "Tahoma"
+    readonly property var gridColors: preferencesVM.gridColors
+    readonly property int cpsWarning: preferencesVM.cpsWarningThreshold
+    readonly property int cpsError: Math.max(cpsWarning, preferencesVM.cpsErrorThreshold)
+    readonly property int colCps: Math.max(42, Math.ceil(gridMetrics.advanceWidth("999") + 12))
+
+    function cpsFraction(cps) {
+        return cps > cpsWarning ? Math.min(1, (cps - cpsWarning + 1) / (cpsError - cpsWarning + 1)) : 0
+    }
     readonly property int rowHeight: Math.max(26, Math.ceil(gridMetrics.height + 6))
     readonly property int colFold: 20
     readonly property int foldCountWidth: 32
-    readonly property int colRow: Math.max(42, Math.ceil(monoMetrics.advanceWidth("0000") + 4))
+    readonly property int colRow: Math.max(42, Math.ceil(gridMetrics.advanceWidth("0000") + 4))
                                   + foldCountWidth + 3
 
     // Values supplied by the model's foldRole role.
     readonly property int openFoldStart: 1
     readonly property int closedFoldStart: 2
     readonly property int foldEnd: 4
-    readonly property int colTime: Math.max(92, Math.ceil(monoMetrics.advanceWidth("0:00:00.00") + 4))
+    readonly property int colTime: Math.max(92, Math.ceil(gridMetrics.advanceWidth("0:00:00.00") + 4))
     readonly property int colLayer: 52
     readonly property int colStyle: 110
     readonly property int colActor: 110
     readonly property int colEffect: 90
-    readonly property string monoFont: "Consolas"
 
     Binding {
         target: gridModel
@@ -32,11 +41,7 @@ Rectangle {
     }
     FontMetrics {
         id: gridMetrics
-        font.pointSize: grid.gridFontSize
-    }
-    FontMetrics {
-        id: monoMetrics
-        font.family: grid.monoFont
+        font.family: grid.gridFontFamily
         font.pointSize: grid.gridFontSize
     }
 
@@ -166,6 +171,15 @@ Rectangle {
                 color: themeVM.onSurfaceVariant
             }
             Label {
+                text: i18n.t("CPS")
+                Layout.minimumWidth: grid.colCps
+                Layout.maximumWidth: grid.colCps
+                font.pixelSize: 11
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                color: themeVM.onSurfaceVariant
+            }
+            Label {
                 text: i18n.t("Text")
                 Layout.fillWidth: true
                 font.pixelSize: 11
@@ -203,15 +217,6 @@ Rectangle {
             function locateActiveRow() {
                 locateDocRow(gridModel.activeRow)
             }
-            function handleFoldEnter(event) {
-                event.accepted = activeFocus && gridModel.selectionHasFolds
-                                 && (event.modifiers & ~Qt.KeypadModifier) === Qt.NoModifier
-                if (event.accepted && !event.isAutoRepeat)
-                    gridModel.toggleFoldsForSelection()
-            }
-            Keys.onReturnPressed: event => handleFoldEnter(event)
-            Keys.onEnterPressed: event => handleFoldEnter(event)
-
             Connections {
                 target: gridModel
                 function onActiveRowChanged() {
@@ -255,8 +260,21 @@ Rectangle {
                 readonly property bool foldClosed: model.foldRole === grid.closedFoldStart
                 readonly property bool foldStart: model.foldRole === grid.openFoldStart || foldClosed
                 readonly property bool foldEnd: model.foldRole === grid.foldEnd
-                color: isActive ? themeVM.rowActive : isSelected ? themeVM.rowSelected
-                       : (index % 2 === 0 ? themeVM.surfaceContainerLow : themeVM.rowAlt)
+                readonly property color defaultBackground: isActive ? themeVM.rowActive : isSelected ? themeVM.rowSelected
+                                                           : (index % 2 === 0 ? themeVM.surfaceContainerLow : themeVM.rowAlt)
+                readonly property var foregroundOverride: grid.gridColors[isSelected ? "Selection" : "Standard"]
+                color: (isSelected ? grid.gridColors["Background/Selection"]
+                                  : model.isComment ? grid.gridColors["Background/Comment"]
+                                                    : grid.gridColors["Background/Background"])
+                       || defaultBackground
+
+                Rectangle {
+                    anchors.fill: parent
+                    z: 1
+                    visible: rowDelegate.isActive && grid.gridColors["Active Border"] !== undefined
+                    color: "transparent"
+                    border.color: grid.gridColors["Active Border"] || "transparent"
+                }
 
                 MouseArea {
                     anchors.fill: parent
@@ -362,9 +380,10 @@ Rectangle {
                             background: Rectangle {
                                 radius: themeVM.radiusSmall
                                 border.color: foldMarker.hovered ? themeVM.primary : themeVM.outline
-                                color: foldMarker.down ? themeVM.surfaceContainerHighest
-                                       : foldMarker.hovered || rowDelegate.foldClosed ? themeVM.primaryContainer
-                                       : themeVM.surfaceContainer
+                                color: grid.gridColors[rowDelegate.foldClosed ? "Background/Closed Fold" : "Background/Open Fold"]
+                                       || (foldMarker.down ? themeVM.surfaceContainerHighest
+                                           : foldMarker.hovered || rowDelegate.foldClosed ? themeVM.primaryContainer
+                                           : themeVM.surfaceContainer)
                             }
                             contentItem: Text {
                                 text: foldMarker.text
@@ -389,9 +408,9 @@ Rectangle {
                             objectName: "subtitleGridRowNumber"
                             text: rowDelegate.docRow + 1
                             Layout.fillWidth: true
-                            font.family: grid.monoFont
+                            font.family: grid.gridFontFamily
                             font.pointSize: grid.gridFontSize
-                            color: model.isComment ? themeVM.rowComment : themeVM.primary
+                            color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.primary)
                         }
                         Label {
                             objectName: "subtitleGridFoldHiddenCount"
@@ -409,52 +428,84 @@ Rectangle {
                     Label {
                         text: model.startTime
                         Layout.preferredWidth: grid.colTime
-                        font.family: grid.monoFont
+                        font.family: grid.gridFontFamily
                         font.pointSize: grid.gridFontSize
-                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
+                        color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.onSurface)
                     }
                     Label {
                         text: model.endTime
                         Layout.preferredWidth: grid.colTime
-                        font.family: grid.monoFont
+                        font.family: grid.gridFontFamily
                         font.pointSize: grid.gridFontSize
-                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
+                        color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.onSurface)
                     }
                     Label {
                         text: model.layer
                         Layout.preferredWidth: grid.colLayer
-                        font.family: grid.monoFont
+                        font.family: grid.gridFontFamily
                         font.pointSize: grid.gridFontSize
-                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
+                        color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.onSurface)
                     }
                     Label {
                         text: model.styleName
                         Layout.preferredWidth: grid.colStyle
+                        font.family: grid.gridFontFamily
                         font.pointSize: grid.gridFontSize
-                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
+                        color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.onSurface)
                         elide: Text.ElideRight
                     }
                     Label {
                         text: model.actor
                         Layout.preferredWidth: grid.colActor
+                        font.family: grid.gridFontFamily
                         font.pointSize: grid.gridFontSize
-                        color: model.isComment ? themeVM.rowComment : themeVM.onSurfaceVariant
+                        color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.onSurfaceVariant)
                         elide: Text.ElideRight
                     }
                     Label {
                         text: model.effect
                         Layout.preferredWidth: grid.colEffect
+                        font.family: grid.gridFontFamily
                         font.pointSize: grid.gridFontSize
-                        color: model.isComment ? themeVM.rowComment : themeVM.onSurfaceVariant
+                        color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.onSurfaceVariant)
                         elide: Text.ElideRight
+                    }
+                    Item {
+                        Layout.minimumWidth: grid.colCps
+                        Layout.maximumWidth: grid.colCps
+                        Layout.fillHeight: true
+                        readonly property int cps: model.cps
+                        readonly property real warningFraction: grid.cpsFraction(cps)
+                        readonly property color warningColor: grid.gridColors["CPS Error"] || themeVM.danger
+                        readonly property color normalText: rowDelegate.foregroundOverride
+                                                            || (model.isComment ? themeVM.rowComment : themeVM.onSurface)
+
+                        Rectangle {
+                            objectName: "subtitleGridCpsBackground"
+                            anchors.fill: parent
+                            opacity: parent.warningFraction
+                            color: parent.warningColor
+                        }
+                        Label {
+                            objectName: "subtitleGridCps"
+                            anchors.centerIn: parent
+                            text: parent.cps < 0 ? "" : String(parent.cps)
+                            font.family: grid.gridFontFamily
+                            font.pointSize: grid.gridFontSize
+                            // Original CPS text fades to black as the warning saturates.
+                            color: Qt.rgba(parent.normalText.r * (1 - parent.warningFraction),
+                                           parent.normalText.g * (1 - parent.warningFraction),
+                                           parent.normalText.b * (1 - parent.warningFraction), 1)
+                        }
                     }
                     Label {
                         objectName: "subtitleGridText"
                         text: model.displayText
                         textFormat: Text.PlainText
                         Layout.fillWidth: true
+                        font.family: grid.gridFontFamily
                         font.pointSize: grid.gridFontSize
-                        color: model.isComment ? themeVM.rowComment : themeVM.onSurface
+                        color: rowDelegate.foregroundOverride || (model.isComment ? themeVM.rowComment : themeVM.onSurface)
                         elide: Text.ElideRight
                     }
                 }

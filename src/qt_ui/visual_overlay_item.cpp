@@ -329,6 +329,15 @@ void VisualOverlayItem::setHighlightColor(const QColor &color) {
     emit colorsChanged();
 }
 
+void VisualOverlayItem::setShadedAreaAlpha(qreal alpha) {
+    if (!std::isfinite(alpha)) return;
+    alpha = std::clamp(alpha, qreal(0), qreal(1));
+    if (shaded_area_alpha_ == alpha) return;
+    shaded_area_alpha_ = alpha;
+    update();
+    emit colorsChanged();
+}
+
 QSize VisualOverlayItem::playRes() const {
     return vm_ ? QSize(vm_->playResX(), vm_->playResY()) : QSize();
 }
@@ -474,7 +483,7 @@ void VisualOverlayItem::paint(QPainter *painter) {
         const auto inside = clip.intersected(video);
         if (!inside.isEmpty())
             outside.addRect(inside); // Odd-even fill leaves the clip interior unshaded.
-        painter->fillPath(outside, QColor(0, 0, 0, 115));
+        painter->fillPath(outside, QColor::fromRgbF(0, 0, 0, float(shaded_area_alpha_)));
         QPen pen(outline, 1.5, vm_->hasRectClip() ? Qt::SolidLine : Qt::DashLine);
         painter->setPen(pen);
         drawClipOutline(painter, clip, video);

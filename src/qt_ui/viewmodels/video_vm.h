@@ -129,6 +129,7 @@ public:
 
     Q_INVOKABLE void seekFrame(int frame);
     Q_INVOKABLE void stepFrame(int delta);
+    Q_INVOKABLE void stepFrameLarge(int direction);
     Q_INVOKABLE void seekToTimeMs(int ms);
     Q_INVOKABLE bool jumpTo(const QString &value);
     Q_INVOKABLE void seekToActiveLine();

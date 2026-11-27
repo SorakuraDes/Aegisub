@@ -316,7 +316,7 @@ int runStage17CIntegrationTest(QQmlApplicationEngine &engine) {
     key(Qt::Key_Z, ctrl);
     CHECK(mapping({0, 6, 7}) && foldRole(0) == Grid::StartCollapsed, "Undo Sort did not restore the collapsed projection");
     grid.selectSingle(0);
-    key(Qt::Key_Delete);
+    key(Qt::Key_Delete, ctrl);
     CHECK(mapping({0, 1, 2, 3, 4, 5, 6}, 7) && docText(grid, 0) == QStringLiteral("Outer interior") &&
           docText(grid, 2) == QStringLiteral("Edited hidden needle"),
           "Deleting the visible start deleted hidden dialogue or left stale projection entries");

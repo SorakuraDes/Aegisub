@@ -59,6 +59,7 @@ public:
         FoldRole,
         FoldDepthRole,
         FoldedHiddenCountRole,
+        CpsRole,
     };
     Q_ENUM(Roles)
     enum FoldDisplay { NoFold, StartOpen, StartCollapsed, InsideFold, EndFold };
@@ -74,6 +75,7 @@ public:
 
     SubtitleGridModel(AssFile *file, UndoManager *undoManager, QObject *parent = nullptr);
     void setVideoViewModel(VideoViewModel *video);
+    void setCpsIgnoreOptions(bool whitespace, bool punctuation);
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -235,6 +237,8 @@ private:
     std::vector<int> doc_to_visible_;
     FoldState folds_;
     int active_row_ = -1;
+    bool cps_ignore_whitespace_ = true;
+    bool cps_ignore_punctuation_ = true;
     QSet<int> selected_rows_;
     /// Row a Shift+Click range starts from.
     int anchor_row_ = -1;

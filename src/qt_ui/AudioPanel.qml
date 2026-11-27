@@ -5,6 +5,8 @@ import Aegisub 1.0
 
 Item {
     id: root
+    readonly property string hotkeyContext: "Audio"
+    readonly property var audioColors: preferencesVM.audioColors
     component AudioTool: CompactIconButton {
         implicitWidth: 28
         implicitHeight: 28
@@ -16,6 +18,7 @@ Item {
         anchors.fill: parent
         spacing: 1
         AudioWaveform {
+            objectName: "audioWaveform"
             Accessible.role: Accessible.Graphic
             Accessible.name: i18n.t("Audio waveform")
             Layout.fillWidth: true
@@ -24,9 +27,11 @@ Item {
             colors: ({ background: themeVM.surface, surface: themeVM.surfaceContainerHigh,
                 foreground: themeVM.onSurface, muted: themeVM.onSurfaceVariant,
                 primary: themeVM.primary, secondary: themeVM.secondary,
-                outline: themeVM.outlineVariant, start: themeVM.danger,
-                end: themeVM.endLine,
-                keyframe: themeVM.kfLine })
+                outline: themeVM.outlineVariant,
+                start: root.audioColors["Line boundary Start"] || themeVM.danger,
+                end: root.audioColors["Line boundary End"] || themeVM.endLine,
+                playhead: root.audioColors["Play Cursor"] || themeVM.onSurface,
+                keyframe: root.audioColors["Keyframe"] || themeVM.kfLine })
         }
         Rectangle {
             Layout.fillWidth: true

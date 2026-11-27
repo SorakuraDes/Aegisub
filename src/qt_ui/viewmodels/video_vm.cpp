@@ -338,6 +338,17 @@ void VideoViewModel::stepFrame(int delta) {
     seekFrame(current_frame_ + delta);
 }
 
+void VideoViewModel::stepFrameLarge(int direction) {
+    const int count = frameCount();
+    if (direction == 0 || count <= 0)
+        return;
+
+    const qint64 configured = config::opt ? OPT_GET("Video/Slider/Fast Jump Step")->GetInt() : 10;
+    const qint64 step = std::clamp<qint64>(configured, 1, 1000);
+    const qint64 target = qint64(current_frame_) + (direction < 0 ? -step : step);
+    seekFrame(int(std::clamp<qint64>(target, 0, count - 1)));
+}
+
 void VideoViewModel::seekToTimeMs(int ms) {
     if (!hasVideo())
         return;

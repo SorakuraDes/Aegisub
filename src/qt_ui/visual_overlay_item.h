@@ -17,6 +17,7 @@ class VisualOverlayItem : public QQuickPaintedItem {
     Q_PROPERTY(VisualToolsViewModel *viewModel READ viewModel WRITE setViewModel NOTIFY viewModelChanged)
     Q_PROPERTY(QColor accentColor READ accentColor WRITE setAccentColor NOTIFY colorsChanged)
     Q_PROPERTY(QColor highlightColor READ highlightColor WRITE setHighlightColor NOTIFY colorsChanged)
+    Q_PROPERTY(qreal shadedAreaAlpha READ shadedAreaAlpha WRITE setShadedAreaAlpha NOTIFY colorsChanged)
 
 public:
     explicit VisualOverlayItem(QQuickItem *parent = nullptr);
@@ -30,6 +31,8 @@ public:
     void setAccentColor(const QColor &color);
     QColor highlightColor() const { return highlight_color_; }
     void setHighlightColor(const QColor &color);
+    qreal shadedAreaAlpha() const { return shaded_area_alpha_; }
+    void setShadedAreaAlpha(qreal alpha);
     void paint(QPainter *painter) override;
 
 signals:
@@ -80,6 +83,7 @@ private:
     QPointF drag_start_screen_;
     QColor accent_color_{"#4fc3f7"};
     QColor highlight_color_{"#b4ecff"};
+    qreal shaded_area_alpha_ = 115.0 / 255;
     int resize_x_ = 0;
     int resize_y_ = 0;
 };

@@ -14,6 +14,7 @@
 #include "../../ass_dialogue.h"
 
 #include <libaegisub/ass/time.h>
+#include <libaegisub/character_count.h>
 #include <libaegisub/exception.h>
 
 #include <QClipboard>
@@ -62,6 +63,15 @@ SubtitleGridModel::SubtitleGridModel(AssFile *file, UndoManager *undoManager, QO
 
 void SubtitleGridModel::setVideoViewModel(VideoViewModel *video) {
     video_vm_ = video;
+}
+
+void SubtitleGridModel::setCpsIgnoreOptions(bool whitespace, bool punctuation) {
+    if (whitespace == cps_ignore_whitespace_ && punctuation == cps_ignore_punctuation_)
+        return;
+    cps_ignore_whitespace_ = whitespace;
+    cps_ignore_punctuation_ = punctuation;
+    if (rowCount() > 0)
+        emit dataChanged(index(0), index(rowCount() - 1), {CpsRole});
 }
 
 void SubtitleGridModel::rebuildRows() {
@@ -615,6 +625,18 @@ QVariant SubtitleGridModel::data(const QModelIndex &index, int role) const {
             return QString::fromStdString(line->Text.get());
         case DisplayTextRole:
             return formatDisplayText(QString::fromStdString(line->Text.get()));
+        case CpsRole: {
+            const int duration = line->End - line->Start;
+            const auto &text = line->Text.get();
+            // Match the original grid's short-duration, byte-count and display guards.
+            if (duration <= 100 || text.size() > static_cast<size_t>(duration))
+                return -1;
+            int flags = agi::IGNORE_BLOCKS;
+            if (cps_ignore_whitespace_) flags |= agi::IGNORE_WHITESPACE;
+            if (cps_ignore_punctuation_) flags |= agi::IGNORE_PUNCTUATION;
+            const auto cps = agi::CharacterCount(text, flags) * 1000 / duration;
+            return cps > 100 ? -1 : static_cast<int>(cps);
+        }
         case CommentRole:
             return line->Comment;
         case SelectedRole:
@@ -642,6 +664,7 @@ QHash<int, QByteArray> SubtitleGridModel::roleNames() const {
         { FoldRole, "foldRole" },
         { FoldDepthRole, "foldDepth" },
         { FoldedHiddenCountRole, "foldedHiddenCount" },
+        { CpsRole, "cps" },
     };
 }
 

@@ -40,6 +40,7 @@ struct Host {
     std::function<QStringList(const QVariantMap&)> chooseFile;
     bool allowDialogs = false;
     std::function<void(std::function<void()>)> onGui;
+    std::function<int()> traceLevel;
 };
 
 struct ScriptMetadata {

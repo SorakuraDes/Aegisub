@@ -62,11 +62,14 @@ bool isScript(const QFileInfo &file) {
     return suffix == QStringLiteral("lua") || suffix == QStringLiteral("moon");
 }
 
+int currentTraceLevel() {
+    return config::opt ? int(std::clamp<int64_t>(OPT_GET("Automation/Trace Level")->GetInt(), 0, 5)) : 3;
+}
+
 void logMessage(int level, const QString &text) {
     if (!agi::log::log) return;
-    const int limit = config::opt ? int(OPT_GET("Automation/Trace Level")->GetInt()) : 3;
     if (level <= 1) LOG_W("qt/automation") << text.toStdString();
-    else if (level <= limit) LOG_I("qt/automation") << text.toStdString();
+    else LOG_I("qt/automation") << text.toStdString();
 }
 
 QString exceptionMessage() {
@@ -212,6 +215,7 @@ struct AutomationViewModel::Impl {
     Host host(const QString &scriptPath) {
         Host h;
         h.translate = [this](const QString &msg) { return i18n.t(msg); };
+        h.traceLevel = currentTraceLevel;
         h.log = [scriptPath](int level, const QString &msg) { logMessage(level, QFileInfo(scriptPath).fileName() + QStringLiteral(": ") + msg); };
         h.frameFromMs = [this](int ms) -> std::optional<int> {
             if (video.hasVideo()) return video.frameAtTimeMs(ms, false);
@@ -275,10 +279,10 @@ struct AutomationViewModel::Impl {
         };
         h.progressTask = [state](const QString &msg) { std::lock_guard lock(state->mutex); state->task = msg; };
         h.progressTitle = [state](const QString &msg) { std::lock_guard lock(state->mutex); state->title = msg; };
-        const int trace = config::opt ? int(OPT_GET("Automation/Trace Level")->GetInt()) : 3;
+        const int trace = currentTraceLevel();
+        h.traceLevel = [trace] { return trace; };
         const QString prefix = QFileInfo(scriptPath).fileName();
-        h.log = [state, trace, prefix](int level, const QString &msg) {
-            if (level > trace) return;
+        h.log = [state, prefix](int level, const QString &msg) {
             std::lock_guard lock(state->mutex);
             if (state->log.size() == 200) state->log.pop_front();
             state->log.push_back({level, (prefix.isEmpty() ? msg : prefix + QStringLiteral(": ") + msg).left(2048)});

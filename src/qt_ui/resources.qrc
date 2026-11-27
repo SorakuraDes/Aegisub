@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/">
+    <file alias="default_hotkey.json">../libresrc/default_hotkey.json</file>
     <file>Main.qml</file>
     <file>SubtitleGrid.qml</file>
     <file>EditBox.qml</file>

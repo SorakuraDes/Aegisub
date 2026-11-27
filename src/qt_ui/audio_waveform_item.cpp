@@ -246,7 +246,9 @@ void AudioWaveformItem::paint(QPainter *painter) {
     auto kSelection = kWaveInside;
     kSelection.setAlpha(40);
     const auto kStartLine = color("start"), kEndLine = color("end");
-    const auto kPlayhead = color("foreground"), kKeyframeLine = color("keyframe");
+    const auto playhead = color("playhead");
+    const auto kPlayhead = playhead.isValid() ? playhead : color("foreground");
+    const auto kKeyframeLine = color("keyframe");
     painter->fillRect(QRectF(0, 0, w, h), kBackground);
     if (w <= 0 || h <= 0)
         return;
@@ -399,6 +401,7 @@ void AudioWaveformItem::mousePressEvent(QMouseEvent *event) {
         return;
     }
 
+    forceActiveFocus(Qt::MouseFocusReason);
     const double x = event->position().x();
     const double ms = std::clamp(xToMs(x), 0.0, double(std::max(1, vm_->durationMs())));
     const int duration = std::max(1, vm_->durationMs());
